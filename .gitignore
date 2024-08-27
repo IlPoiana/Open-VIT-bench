@@ -1,20 +1,20 @@
-obj
-bin
+/obj
+/bin
 
-omp_obj
-omp_bin
+/omp_obj
+/omp_bin
 
-test_obj
-test_bin
-test_files
+/test_obj
+/test_bin
+/test_files
 
-data
-models
-out
-measures
+/data
+/models
+/out
+/measures
 
-out_comparison
-logs
+/out_comparison
+/logs
 
-timm_train_vit/data
+/timm_train_vit/data
 .vscode
