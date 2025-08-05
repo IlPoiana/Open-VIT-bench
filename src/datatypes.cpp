@@ -85,6 +85,10 @@ vit_float RowVector::at(vit_size i) const {
     return data[i];
 }
 
+vit_float * RowVector::get_data() const {
+    return data;
+}
+
 void RowVector::set(vit_size i, vit_float val) {
     assert(i<DIM);
     data[i] = val;
@@ -555,6 +559,10 @@ vit_size PictureBatch::get_H() const {
 
 vit_size PictureBatch::get_W() const {
     return W;
+}
+
+vit_float * PictureBatch::get_data() const {
+    return data;
 }
 
 vit_float PictureBatch::at(vit_size b, vit_size c, vit_size h, vit_size w) const {

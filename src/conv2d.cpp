@@ -133,6 +133,7 @@ void Conv2d::forward(const PictureBatch& x_in, PictureBatch& x_out) const {
         assert(bias.get_DIM() == out_channels);
     }
 
+    //kernel.get_H() = -get_W() = 16 which is also the stride
     assert( (x_in.get_H()-kernel.get_H()) % stride_h  == 0);
     vit_size out_h = ( (x_in.get_H()-kernel.get_H()) / stride_h ) + 1;
 
@@ -142,13 +143,15 @@ void Conv2d::forward(const PictureBatch& x_in, PictureBatch& x_out) const {
     PictureBatch y(x_in.get_B(), out_channels, out_h, out_w);
 
     vit_float val;
+    // k_c from 0 to 3[ (channels)
+    // y_c from 0 to 768[ (out_channels) that are the embedding dimensions
     for (int batch=0;batch<y.get_B();++batch) {
         for (int y_c=0;y_c<out_channels;++y_c) {
-
+            // Iterate over all the patches (14x14)
             for (int y_h=0;y_h<out_h;++y_h) {
                 for (int y_w=0;y_w<out_w;++y_w) {
                     val = use_bias==true ? bias.at(y_c) : 0;
-
+                    // Iterate over all the values of each patch (C=3 x 16 x16)
                     for(int k_c=0;k_c<kernel.get_C();++k_c) {
                         for(int k_h=0;k_h<kernel.get_H();++k_h) {
                             for(int k_w=0;k_w<kernel.get_W();++k_w) {
@@ -158,7 +161,6 @@ void Conv2d::forward(const PictureBatch& x_in, PictureBatch& x_out) const {
                             }
                         }
                     }
-
                     y.set(batch, y_c, y_h, y_w, val);
                 }
             }

@@ -1,9 +1,7 @@
 # C-ViT
 
-My bachelor thesis deals with a framework to implementation Vision Transformers in C++.
-This project contains an implementation of all the necessary components as well as a full ViT model
-and many scripts to automate the benchmarking and comparison process.
-You will see code in C++, C++ parallelized with OMP and Python.
+Starting from the C-ViT project, this extension aims to be implement a GPU accelerated benchmarking reference.
+The project structure follows the original one to mantain all the original functions, blocks and tests accessible for comparison. After the cpp and omp sections(kept for the most same as the original) there is the GPU one.  
 
 ## Files in this repository
 
@@ -72,6 +70,9 @@ The execution of the programs will lead to the creation and filling of the follo
 
 ## How to run the tests
 
+> [!Warning]
+> Is necessary to create `obj/`, `test_obj/`, `test_bin/` to properly work.
+
 The test files in the *test_src/* and *timm_train_vit/* are meant to show that the C++ and the python code produce the same results. I designed the tests to be executed in two parallel terminals.
 
 In the first terminal, go to the *timm_train_vit/* and execute `python3 test_<component_name>.py`. On the other terminal first compile the C++ code with `make test_bin/test_<component_name>.exe`, then execute it with `./test_bin/test_<component_name>.exe`. You will appreciate the same result in both the terminals, meaning the floating point numbers will differ only in the less significant decimal digits.
@@ -103,3 +104,24 @@ When you want to clean the work space, you have two possible commands:
 ## Maintainer
 
 *Alex Pegoraro*
+
+# GPU acceleration
+This section is for explain briefly how are made and how to use the Accelerated components
+
+## Repo Structure
+- *gpu_include:* this folder contains all the header files following the same logic as the cpp section.
+- *gpu_src:* this folder contains all the source files with the C++/CUDA implementations following the same logic as the cpp section.
+- *test_src:* in the same folder as the previous section there are the test implementations, they are build with the same commands as cpp
+
+> [!Warning]
+> Actually is implemented only the Conv2d kernels used in the patch embedder.
+
+## Conv2d
+
+## Norm (Layer Norm)
+
+## Attention
+
+## Layer Scale
+
+## MLP

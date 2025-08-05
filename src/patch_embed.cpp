@@ -8,7 +8,11 @@
 #include <assert.h>
 
 
-
+//last 4 flags:
+// c2d_bias
+// _strict_img_size
+// _dynamic_img_pad
+// _use_norm
 PatchEmbed::PatchEmbed(
     vit_size _img_size_h,
     vit_size _img_size_w,
@@ -206,6 +210,7 @@ void PatchEmbed::from_ifstream(std::ifstream& is) {
     }
 }
 
+//Patch Embedder forward function, executes the conv2d and flat operations, eventually the norm if the norm flag is active
 void PatchEmbed::forward(const PictureBatch& p_in, Tensor& x_out) const {
     if (strict_img_size == true) {
         assert(p_in.get_H() == img_size_h);

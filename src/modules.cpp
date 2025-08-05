@@ -157,16 +157,20 @@ void LayerNorm::operator()(Tensor& x, vit_size num_heads, vit_size head_dim) con
     vit_float var;
     vit_float st_dev;
     vit_float new_val;
+    //Batch
     for (int i=0;i<x.get_B();++i) {
+        //Elements (like 196)
         for (int j=0;j<x.get_N();++j) {
             for (int k=0;k<num_heads;++k) {
                 mean = 0.0;
+                //768 typically
                 for (int l=0;l<head_dim;++l) {
                     mean += x.at(i,j, (k*head_dim) + l);
                 }
                 mean /= (float) head_dim;
 
                 var = 0.0;
+                //768 again
                 for (int l=0;l<head_dim;++l) {
                     var += std::pow( x.at(i,j, (k*head_dim) + l) - mean, 2);
                 }

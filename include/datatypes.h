@@ -4,7 +4,6 @@
 #include <fstream>
 
 
-
 typedef unsigned vit_size;
 typedef float vit_float;
 typedef bool vit_bool;
@@ -31,6 +30,7 @@ public:
 
     vit_size get_DIM() const;
     vit_float at(vit_size i) const;
+    vit_float * get_data() const;
 
     void set(vit_size i, vit_float val);
 
@@ -129,6 +129,7 @@ public:
     vit_size get_C() const;
     vit_size get_H() const;
     vit_size get_W() const ;
+    vit_float * get_data() const;
     vit_float at(vit_size b, vit_size c, vit_size h, vit_size w) const;
 
     void flatten_to_tensor(Tensor& t) const;
@@ -141,7 +142,6 @@ public:
     void to_ofstream(std::ofstream& os) const;
     void from_ifstream(std::ifstream& is);
 };
-
 
 
 class PredictionBatch {

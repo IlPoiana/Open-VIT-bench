@@ -143,6 +143,7 @@ void Block::forward(const Tensor& x_in, Tensor& x_out) const {
     x_out += y;
 }
 
+//Encoder block forward 
 void Block::timed_forward(
     const Tensor& x_in,
     Tensor& x_out,

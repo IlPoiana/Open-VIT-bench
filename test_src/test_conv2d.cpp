@@ -47,12 +47,12 @@ int main() {
          10.084, -68.542,  30.343
     };
     PictureBatch k(k_data, 4*2*3*3, 4, 2, 3, 3);
-    cout << "### k" << endl;
+    cout << "### kernel" << endl;
     k.print();
 
     vit_float b_data[4] = {-5.247, -10.884, -60.649, 51.270};
     RowVector b(b_data, 4);
-    cout << "### b" << endl;
+    cout << "### bias" << endl;
     b.print();
 
     vit_float x_data[3*2*5*9] = {
@@ -97,7 +97,7 @@ int main() {
          18.403, -29.482,  -7.431,  15.015, -24.908,  83.084,  88.144, -47.516,  40.005
     };
     PictureBatch x(x_data, 3*2*5*9, 3, 2, 5, 9);
-    cout << "### x" << endl;
+    cout << "### x input" << endl;
     x.print();
 
     Conv2d c2d(2, 4, 3, 3, 2, 2, true);

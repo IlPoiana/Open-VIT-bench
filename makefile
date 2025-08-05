@@ -5,6 +5,7 @@ OMPFLAGS := -fopenmp
 BIN_FOLDER := bin
 OBJ_FOLDER := obj
 SRC_FOLDER := src
+GPU_SRC_FOLDER := gpu_src
 
 OMP_BIN_FOLDER := omp_bin
 OMP_OBJ_FOLDER := omp_obj
@@ -14,6 +15,7 @@ TEST_BIN_FOLDER := test_bin
 TEST_OBJ_FOLDER := test_obj
 TEST_SRC_FOLDER := test_src
 
+CUDA_FLAGS := -arch=sm_50 -lcublas
 
 
 all : vit
@@ -47,6 +49,53 @@ $(OBJ_FOLDER)/main.o \
 \
 : $(OBJ_FOLDER)/%.o : $(SRC_FOLDER)/%.cpp
 	$(CC) -c $(CFLAGS) $^ -o $@
+
+# ALL OBJ TARGET
+$(OBJ_FOLDER)/gpu_datatypes.o \
+$(OBJ_FOLDER)/gpu_conv2d.o \
+$(OBJ_FOLDER)/cuda_utils.o \
+: $(OBJ_FOLDER)/%.o : $(GPU_SRC_FOLDER)/%.cu
+	nvcc -c $(CUDA_FLAGS) $^ -o $@
+
+obj/cuBLAS.o : $(OBJ_FOLDER)/datatypes.o \
+$(OBJ_FOLDER)/modules.o \
+$(OBJ_FOLDER)/mlp.o \
+$(OBJ_FOLDER)/conv2d.o \
+$(OBJ_FOLDER)/attention.o \
+$(OBJ_FOLDER)/block.o \
+$(OBJ_FOLDER)/patch_embed.o \
+$(OBJ_FOLDER)/vision_transformer.o \
+$(OBJ_FOLDER)/utils.o \
+$(OBJ_FOLDER)/gpu_conv2d.o \
+$(OBJ_FOLDER)/gpu_datatypes.o 
+	nvcc $(CUDA_FLAGS) $(GPU_SRC_FOLDER)/cuBLAS.cu $^ -o $(OBJ_FOLDER)/cuBLAS.o
+
+
+# GPU TEST OBJ
+$(TEST_OBJ_FOLDER)/test_gpu_conv2d.o \
+\
+: $(TEST_OBJ_FOLDER)/%.o : $(TEST_SRC_FOLDER)/%.cu
+	nvcc $(CUDA_FLAGS) -c $(CFLAGS) $^ -o $@
+
+# GPU TEST BIN
+$(TEST_BIN_FOLDER)/test_gpu_conv2d.exe \
+\
+: $(TEST_BIN_FOLDER)/%.exe : \
+\
+$(OBJ_FOLDER)/datatypes.o \
+$(OBJ_FOLDER)/modules.o \
+$(OBJ_FOLDER)/mlp.o \
+$(OBJ_FOLDER)/conv2d.o \
+$(OBJ_FOLDER)/attention.o \
+$(OBJ_FOLDER)/block.o \
+$(OBJ_FOLDER)/patch_embed.o \
+$(OBJ_FOLDER)/vision_transformer.o \
+$(OBJ_FOLDER)/utils.o \
+$(OBJ_FOLDER)/gpu_conv2d.o \
+$(OBJ_FOLDER)/gpu_datatypes.o \
+$(OBJ_FOLDER)/cuda_utils.o \
+$(TEST_OBJ_FOLDER)/%.o
+	nvcc $(CUDA_FLAGS) $^ -o $@
 
 # Executables
 $(BIN_FOLDER)/vit.exe : \
