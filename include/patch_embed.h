@@ -59,6 +59,10 @@ public:
     vit_bool get_dynamic_img_pad() const;
     vit_bool get_use_norm() const;
 
+    vit_float * get_conv2d_kernel();
+    vit_float * get_conv2d_bias(); 
+    void get_kernel_dimensions(int kernel_shape[6]);
+
     vit_size get_feat_ratio() const;
     void get_dynamic_feat_size(
         vit_size _img_size_h, vit_size _img_size_w,

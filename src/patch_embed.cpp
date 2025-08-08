@@ -130,6 +130,18 @@ vit_bool PatchEmbed::get_use_norm() const {
     return use_norm;
 }
 
+vit_float * PatchEmbed::get_conv2d_kernel () {
+    return c2d.get_kernel();
+}
+
+vit_float * PatchEmbed::get_conv2d_bias() {
+    return c2d.get_bias();
+}
+
+void PatchEmbed::get_kernel_dimensions(int kernel_shape[6]) {
+    return c2d.get_dimensions(kernel_shape);
+}
+
 vit_size PatchEmbed::get_feat_ratio() const {
     return patch_size_h>=patch_size_w ? patch_size_h : patch_size_w;
 }

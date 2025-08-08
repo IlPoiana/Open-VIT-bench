@@ -37,6 +37,9 @@ class Conv2d {
         vit_size get_stride_h() const;
         vit_size get_stride_w() const;
         vit_bool get_use_bias() const;
+        vit_float * get_kernel();
+        vit_float * get_bias();
+        void get_dimensions(int kernel_shape[6]);
 
         void move_kernel(PictureBatch& _kernel);
         void move_bias(RowVector& _bias);

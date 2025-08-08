@@ -89,6 +89,9 @@ public:
     vit_bool get_use_pre_norm() const;
     vit_bool get_use_fc_norm() const;
     vit_bool get_dynamic_img_size() const;
+    vit_float * get_conv2d_kernel();
+    vit_float * get_conv2d_bias();
+    void get_kernel_shape(int kernel_shape[6]);
 
     void move_cls_token(RowVector _cls_token);
     void move_reg_token(Matrix _reg_token);

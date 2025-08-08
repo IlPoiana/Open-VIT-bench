@@ -162,6 +162,14 @@ vit_bool VisionTransformer::get_use_pre_norm() const { return use_pre_norm; }
 vit_bool VisionTransformer::get_use_fc_norm() const { return use_fc_norm; }
 vit_bool VisionTransformer::get_dynamic_img_size() const { return dynamic_img_size; }
 
+vit_float * VisionTransformer::get_conv2d_kernel() {
+    return patch_embed.get_conv2d_kernel();
+}
+
+vit_float * VisionTransformer::get_conv2d_bias() {
+    return patch_embed.get_conv2d_bias();
+}
+
 void VisionTransformer::move_cls_token(RowVector _cls_token) {
     cls_token = std::move(_cls_token);
 }

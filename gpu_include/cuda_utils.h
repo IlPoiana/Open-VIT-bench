@@ -1,8 +1,8 @@
 #include <vector>
-
+#include <string>
 // CUDA API error checking
 #define CUDA_CHECK(err)                                                                            \
-    do {                                                                                           \
+do {                                                                                           \
         cudaError_t err_ = (err);                                                                  \
         if (err_ != cudaSuccess) {                                                                 \
             std::printf("CUDA error %d at %s:%d\n", err_, __FILE__, __LINE__);                     \
@@ -10,7 +10,7 @@
         }                                                                                          \
     } while (0)
 #define CUBLAS_CHECK(err)                                                                          \
-    do {                                                                                           \
+do {                                                                                           \
         cublasStatus_t err_ = (err);                                                               \
         if (err_ != CUBLAS_STATUS_SUCCESS) {                                                       \
             std::printf("cublas error %d at %s:%d\n", err_, __FILE__, __LINE__);                   \
@@ -18,6 +18,7 @@
         }                                                                                          \
     } while (0)
 
+using namespace std;
 
 struct picture_shape {
     int B;  // Batch
@@ -33,20 +34,27 @@ struct conv_kernel_shape {
     int H;  // Channels
     int w_stride;  // Height
     int h_stride;  // Width
+    int in_channels;
+    int out_channels;
 
     conv_kernel_shape(int w, int h, int s_w, int s_h) : W(w), H(h), w_stride(s_w), h_stride(s_h) {}
+    conv_kernel_shape(int w, int h, int s_w, int s_h, int in_ch, int out_ch) : W(w), H(h), w_stride(s_w), h_stride(s_h),
+    in_channels(in_ch), out_channels(out_ch) {}
+    conv_kernel_shape(int * array_shape);
     conv_kernel_shape();  
 };
 
 struct benchmark_time
 {
-    std::vector<float> preprocess;
+    vector<float> preprocess;
     float kernel;
 
-    benchmark_time(std::vector<float> pre, float &k);
+    benchmark_time(vector<float> pre, float &k);
+    benchmark_time();
 };
 
 void print_time(benchmark_time time);
+void print_json_time(benchmark_time time, const vector<string>& preprocess_names);
 
 __global__ void addScalarKernel(float* array, float val, int N);
 

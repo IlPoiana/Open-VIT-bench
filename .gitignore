@@ -21,3 +21,5 @@
 
 *.nsys-rep
 cuBLAS.cu
+/timm_train_vit/*
+json/*

@@ -86,6 +86,19 @@ vit_bool Conv2d::get_use_bias() const {
     return use_bias;
 }
 
+vit_float * Conv2d::get_kernel() {
+    return kernel.get_data();
+}
+
+vit_float * Conv2d::get_bias() {
+    return bias.get_data();
+}
+
+void Conv2d::get_dimensions(int kernel_shape[6]){
+    int vals[6] = {(int)in_channels,(int)out_channels,(int)kernel_h,(int)kernel_w,(int)stride_h,(int)stride_w};
+    for (int i = 0; i < 6; ++i) kernel_shape[i] = vals[i];
+}
+
 void Conv2d::move_kernel(PictureBatch& _kernel) {
     kernel = std::move(_kernel);
 }

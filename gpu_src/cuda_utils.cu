@@ -9,6 +9,17 @@ conv_kernel_shape::conv_kernel_shape(){
     H=0;
     w_stride=0;
     h_stride=0;
+    in_channels=0;
+    out_channels=0;
+}
+
+conv_kernel_shape::conv_kernel_shape(int * array_shape){
+    in_channels=array_shape[0];
+    out_channels=array_shape[1];
+    H=array_shape[2];
+    W=array_shape[3];
+    h_stride=array_shape[4];
+    w_stride=array_shape[5];
 }
 
 __global__ void addScalarKernel(float* array, float val, int N) {
@@ -22,11 +33,23 @@ benchmark_time::benchmark_time(std::vector<float> pre, float& k): kernel(k){
     preprocess = std::move(pre);
 }
 
-void print_time(benchmark_time time){
+benchmark_time::benchmark_time(){
+    kernel = 0.0;
+    preprocess = {};
+}
+void print_time(benchmark_time time)
+{
     for(u_int i = 0; i < time.preprocess.size(); i++){
         printf("preprocess time[%d]: %f\n", i,time.preprocess.at(i));        
     }
     printf("kernel elapsed time: %f\n", time.kernel);
+}
+
+void print_json_time(benchmark_time time, const std::vector<std::string>& preprocess_names){
+    for(u_int i = 0; i < time.preprocess.size(); i++){
+        printf("\"%s\":%f,\n", (preprocess_names.at(i)).c_str(),time.preprocess.at(i));        
+    }
+    printf("\"kernel\": %f\n", time.kernel);
 }
 
 void linearize(float * data, float * linearized_data, picture_shape input_img, conv_kernel_shape kernel)
@@ -47,7 +70,7 @@ void linearize(float * data, float * linearized_data, picture_shape input_img, c
     assert( (W-P_W) % stride_w == 0);
     int out_w = ( (W-P_W) / stride_w ) + 1;
 
-    std::cout << "Total number of patches:" << out_h * out_w << "\nout_h" << out_h << " | out_w" << out_w <<std::endl;
+    // std::cout << "Total number of patches:" << out_h * out_w << "\nout_h" << out_h << " | out_w" << out_w <<std::endl;
 
     u_int d_offset = 0;
     u_int h_offset = 0;

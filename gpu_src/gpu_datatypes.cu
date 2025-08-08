@@ -23,7 +23,7 @@ GPUPictureBatch::GPUPictureBatch(
         int out_w = ( (shape.W-kernel_shape.W) / kernel_shape.w_stride ) + 1;
         //Allocate total patch size on the GPU
         vit_size d_size = out_h * out_w * kernel_shape.W * kernel_shape.H * shape.C * shape.B;
-        printf("d_size: %d\n", d_size);
+        // printf("d_size: %d\n", d_size);
         vit_float * linearized_data = (vit_float *)malloc(sizeof(vit_float) * d_size);
         //linearize the input data
         linearize(_data, linearized_data, shape, kernel_shape);
@@ -33,15 +33,13 @@ GPUPictureBatch::GPUPictureBatch(
     
         
         //copy on the device the linearized matrix
-        CUDA_CHECK(cudaMemcpyAsync(d_data, linearized_data, sizeof(vit_float) * d_size, cudaMemcpyHostToDevice,
-        stream));
+        CUDA_CHECK(cudaMemcpy(d_data, linearized_data, sizeof(vit_float) * d_size, cudaMemcpyHostToDevice));
     }
     else{
         //initialize the memory
         CUDA_CHECK(cudaMalloc(&d_data, sizeof(vit_float) * data_dim));
     
-        CUDA_CHECK(cudaMemcpyAsync(d_data, _data, sizeof(vit_float) * data_dim, cudaMemcpyHostToDevice,
-        stream));
+        CUDA_CHECK(cudaMemcpy(d_data, _data, sizeof(vit_float) * data_dim, cudaMemcpyHostToDevice));
     }
 
 }
@@ -64,7 +62,7 @@ GPUPictureBatch::GPUPictureBatch(vit_float* _data, vit_size data_dim, picture_sh
         int out_w = ( (shape.W-kernel_shape.W) / kernel_shape.w_stride ) + 1;
         //Allocate total patch size on the GPU
         vit_size d_size = out_h * out_w * kernel_shape.W * kernel_shape.H * shape.C * shape.B;
-        printf("d_size: %d\n", d_size);
+        // printf("d_size: %d\n", d_size);
         vit_float * linearized_data = (vit_float *)malloc(sizeof(vit_float) * d_size);
         //linearize the input data
         linearize(_data, linearized_data, shape, kernel_shape);
@@ -74,15 +72,13 @@ GPUPictureBatch::GPUPictureBatch(vit_float* _data, vit_size data_dim, picture_sh
     
         
         //copy on the device the linearized matrix
-        CUDA_CHECK(cudaMemcpyAsync(d_data, linearized_data, sizeof(vit_float) * d_size, cudaMemcpyHostToDevice,
-        stream));
+        CUDA_CHECK(cudaMemcpy(d_data, linearized_data, sizeof(vit_float) * d_size, cudaMemcpyHostToDevice));
     }
     else{
         //initialize the memory
         CUDA_CHECK(cudaMalloc(&d_data, sizeof(vit_float) * data_dim));
     
-        CUDA_CHECK(cudaMemcpyAsync(d_data, _data, sizeof(vit_float) * data_dim, cudaMemcpyHostToDevice,
-        stream));
+        CUDA_CHECK(cudaMemcpy(d_data, _data, sizeof(vit_float) * data_dim, cudaMemcpyHostToDevice));
     }
 
 }
@@ -113,7 +109,7 @@ GPUPictureBatch::GPUPictureBatch(
         
         //Allocate total patch size on the GPU
         vit_size d_size = out_h * out_w * kernel_shape.W * kernel_shape.H * shape.C * shape.B;
-        printf("d_size: %d\n", d_size);
+        // printf("d_size: %d\n", d_size);
         vit_float * linearized_data = (vit_float *)malloc(sizeof(vit_float) * d_size);
         
         //linearize the input data
@@ -127,15 +123,13 @@ GPUPictureBatch::GPUPictureBatch(
         CUDA_CHECK(cudaMalloc(&d_data, sizeof(vit_float) * d_size));
     
         //copy on the device the linearized matrix
-        CUDA_CHECK(cudaMemcpyAsync(d_data, linearized_data, sizeof(vit_float) * d_size, cudaMemcpyHostToDevice,
-        stream));
+        CUDA_CHECK(cudaMemcpy(d_data, linearized_data, sizeof(vit_float) * d_size, cudaMemcpyHostToDevice));
     }
     else{
         //initialize the memory
         CUDA_CHECK(cudaMalloc(&d_data, sizeof(vit_float) * data_dim));
     
-        CUDA_CHECK(cudaMemcpyAsync(d_data, _data, sizeof(vit_float) * data_dim, cudaMemcpyHostToDevice,
-        stream));
+        CUDA_CHECK(cudaMemcpy(d_data, _data, sizeof(vit_float) * data_dim, cudaMemcpyHostToDevice));
     }
 
 }
@@ -175,15 +169,13 @@ GPUPictureBatch::GPUPictureBatch(
         CUDA_CHECK(cudaMalloc(&d_data, sizeof(vit_float) * d_size));
         
         //copy on the device the linearized matrix
-        CUDA_CHECK(cudaMemcpyAsync(d_data, linearized_data, sizeof(vit_float) * d_size, cudaMemcpyHostToDevice,
-        stream));
+        CUDA_CHECK(cudaMemcpy(d_data, linearized_data, sizeof(vit_float) * d_size, cudaMemcpyHostToDevice));
     }
     else{
         //initialize the memory
         CUDA_CHECK(cudaMalloc(&d_data, sizeof(vit_float) * data_dim));
     
-        CUDA_CHECK(cudaMemcpyAsync(d_data, _data, sizeof(vit_float) * data_dim, cudaMemcpyHostToDevice,
-        stream));
+        CUDA_CHECK(cudaMemcpy(d_data, _data, sizeof(vit_float) * data_dim, cudaMemcpyHostToDevice));
     }
 }
 

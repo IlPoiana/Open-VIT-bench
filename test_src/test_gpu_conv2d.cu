@@ -124,7 +124,7 @@ void single_channel() {
     //forward 2
     //...
 
-    c2d.cuda_free();
+    c2d.kernel_free();
     //stream should be already free
     x.data_free();
     cout << "### y = conv(x) stride 2,2" << endl;
@@ -248,7 +248,7 @@ void unified() {
     //forward 2
     //...
 
-    c2d.cuda_free();
+    c2d.kernel_free();
     //stream should be already free
     x.data_free();
     cout << "### y = conv(x) stride 2,2" << endl;
@@ -372,7 +372,7 @@ void unified_parallelized() {
     //forward 2
     //...
 
-    c2d.cuda_free();
+    c2d.kernel_free();
     //stream should be already free
     x.data_free();
     cout << "### y = conv(x) stride 2,2" << endl;
@@ -512,7 +512,7 @@ void timed_single_channel() {
     c2d.timed_forward(x, y, 0, time); // compute the forward and save it to y
 	print_time(time);
 
-    c2d.cuda_free();
+    c2d.kernel_free();
     //stream should be already free
     x.data_free();
     y.print();
@@ -638,7 +638,7 @@ void timed_unified_channel() {
     c2d.timed_forward(x, y, 1,time); // compute the forward and save it to y
     print_time(time);
 
-    c2d.cuda_free();
+    c2d.kernel_free();
     //stream should be already free
     x.data_free();
     y.print();
@@ -761,7 +761,7 @@ void timed_parallelized() {
     PictureBatch y;
     c2d.timed_forward(x, y, 2, time); // compute the forward and save it to y
 	print_time(time);
-    c2d.cuda_free();
+    c2d.kernel_free();
     //stream should be already free
     x.data_free();
     cout << "### y = conv(x) stride 2,2" << endl;

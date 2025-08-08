@@ -11,6 +11,24 @@
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 
+#include <sys/time.h>
+
+GPUConv2d:: GPUConv2d(
+    conv_kernel_shape kernel_shape,
+    vit_bool _use_bias
+): Conv2d(
+        kernel_shape.in_channels, kernel_shape.out_channels, kernel_shape.H,
+        kernel_shape.W, kernel_shape.h_stride, kernel_shape.w_stride, _use_bias
+    ) 
+{   
+    // std::cout << "Initialized the GPUConv2d class" << std::endl;
+    // std::cout << "in_channels: "  << get_in_channels()
+    //        << ", out_channels: " << get_out_channels()
+    //        << ", kernel: h"       << get_kernel_h() << "x" << get_kernel_w()
+    //        << ", stride: "       << get_stride_h() << "x" << get_stride_w()
+    //        << ", use_bias: "     << get_use_bias() << std::endl;
+}
+
 GPUConv2d:: GPUConv2d(
     vit_size _in_channels,
     vit_size _out_channels,
@@ -65,21 +83,21 @@ void GPUConv2d:: set_d_kernel(vit_float * device_idx){
 void GPUConv2d::move_kernel(PictureBatch& _kernel){    
     gpu_kernel = std::move(_kernel);
     u_int n_elements= gpu_kernel.get_B() * gpu_kernel.get_C() * gpu_kernel.get_H() * gpu_kernel.get_W();
-    std::cout << "kernel dimension" << n_elements << std::endl;
+    // std::cout << "kernel dimension" << n_elements << std::endl;
     CUDA_CHECK(cudaMalloc(&d_kernel, sizeof(vit_float) * n_elements));
-    CUDA_CHECK(cudaMemcpyAsync(d_kernel, gpu_kernel.get_data(), sizeof(vit_float) * n_elements, cudaMemcpyHostToDevice,
-                               stream));
+    CUDA_CHECK(cudaMemcpy(d_kernel, gpu_kernel.get_data(), sizeof(vit_float) * n_elements, cudaMemcpyHostToDevice));
 }
     
     
     //Allocate into the GPU the passed bias
-void GPUConv2d::move_bias(RowVector& _bias){
+void GPUConv2d::move_bias(RowVector& _bias, vit_bool on_gpu){
     gpu_bias = std::move(_bias);
-    u_int n_elements= gpu_bias.get_DIM();
-    std::cout << "bias dimension" << n_elements << std::endl;
-    CUDA_CHECK(cudaMalloc(&d_bias, sizeof(vit_float) * n_elements));
-    CUDA_CHECK(cudaMemcpyAsync(d_bias, gpu_bias.get_data(), sizeof(vit_float) * n_elements, cudaMemcpyHostToDevice,
-                               stream)); 
+    // std::cout << "bias dimension" << n_elements << std::endl;
+    if(on_gpu){
+        u_int n_elements= gpu_bias.get_DIM();
+        CUDA_CHECK(cudaMalloc(&d_bias, sizeof(vit_float) * n_elements));
+        CUDA_CHECK(cudaMemcpy(d_bias, gpu_bias.get_data(), sizeof(vit_float) * n_elements, cudaMemcpyHostToDevice)); 
+    }
 }
 
 /*
@@ -163,29 +181,32 @@ void GPUConv2d:: test_forward(GPUPictureBatch& x_in, PictureBatch& x_out, u_int 
     }
 } 
 
+//Change to CPU eval, single and unified returns only when all cuda op are finished
 void GPUConv2d:: timed_forward(GPUPictureBatch& x_in, PictureBatch& x_out, u_int level, benchmark_time& time){
-    cudaEvent_t start;cudaEvent_t stop;
-    CUDA_CHECK(cudaEventCreate(&start));
-    CUDA_CHECK(cudaEventCreate(&stop));
+    // cudaEvent_t start;cudaEvent_t stop;
+    // CUDA_CHECK(cudaEventCreate(&start));
+    // CUDA_CHECK(cudaEventCreate(&stop));
+    struct timeval tik={0,0};
+	struct timeval tok={0,0};
     switch (level){
         case 0:
-            CUDA_CHECK(cudaEventRecord(start));
+            gettimeofday(&tik, (struct timezone*)0);            
             single_forward(x_in, x_out);
-            CUDA_CHECK(cudaEventRecord(stop));
+            gettimeofday(&tok, (struct timezone*)0);
             break;
         case 1:
-            CUDA_CHECK(cudaEventRecord(start));
+            gettimeofday(&tik, (struct timezone*)0);            
             unified_forward(x_in, x_out);
-            CUDA_CHECK(cudaEventRecord(stop));
+            gettimeofday(&tok, (struct timezone*)0);
             break;
         default:
-            memory_forward(x_in, x_out);
-            break;
+            gettimeofday(&tik, (struct timezone*)0);            
+            time_memory_forward(x_in, x_out, time);
+            gettimeofday(&tok, (struct timezone*)0);
+        break;
     }
-    
-    cudaEventSynchronize(stop);
-    cudaEventElapsedTime(&time.kernel, start, stop);
-    
+    time.kernel = ((tok.tv_sec-tik.tv_sec)*1.e6+(tok.tv_usec-tik.tv_usec));
+    // cudaEventDestroy(start);cudaEventDestroy(stop);
 }
 
 
@@ -205,7 +226,7 @@ void GPUConv2d::single_forward(GPUPictureBatch& x_in, PictureBatch& x_out) {
     vit_size stride_h = get_stride_h();
     vit_size stride_w = get_stride_w();
 
-    printf("executing the GPUConv2d single channel forward\n");
+    // printf("executing the GPUConv2d single channel forward\n");
     
     assert(C == in_channels);
     assert(gpu_kernel.get_C() == out_channels);
@@ -287,8 +308,8 @@ void GPUConv2d::single_forward(GPUPictureBatch& x_in, PictureBatch& x_out) {
 // Sequential forward but with unified kernel computation
 void GPUConv2d::unified_forward(GPUPictureBatch& x_in, PictureBatch& x_out) {
 
-    vit_size in_channels = get_in_channels(); //2
-    vit_size out_channels = get_out_channels(); //1
+    vit_size in_channels = get_in_channels(); 
+    vit_size out_channels = get_out_channels(); 
 
     vit_size B = x_in.get_B();
     vit_size C = x_in.get_C();
@@ -299,8 +320,10 @@ void GPUConv2d::unified_forward(GPUPictureBatch& x_in, PictureBatch& x_out) {
     vit_size stride_h = get_stride_h();
     vit_size stride_w = get_stride_w();
 
-    printf("executing the GPUConv2d unified forward\n");
+    // printf("executing the GPUConv2d unified forward\n");
     // x_in.print();
+    // std::cout<< gpu_bias.get_DIM() << endl;
+
     assert(C == in_channels);
     assert(gpu_kernel.get_C() == out_channels);
     assert(gpu_kernel.get_B() == in_channels);
@@ -462,3 +485,127 @@ void GPUConv2d::memory_forward(GPUPictureBatch& x_in, PictureBatch& x_out)  {
     x_out = std::move(y);
 }
 
+// fully parallelize forward that copies the result only once
+void GPUConv2d::time_memory_forward(GPUPictureBatch& x_in, PictureBatch& x_out,benchmark_time& time)  {
+    
+    //time related variables
+    struct timeval tik={0,0};
+	struct timeval tok={0,0};    
+	float elapsed_time;
+
+    vit_size in_channels = get_in_channels(); //2
+    vit_size out_channels = get_out_channels(); //1
+
+    vit_size B = x_in.get_B();
+    vit_size C = x_in.get_C();
+    vit_size H = x_in.get_H();
+    vit_size W = x_in.get_W();
+    vit_size P_H = gpu_kernel.get_H();
+    vit_size P_W = gpu_kernel.get_W();
+    vit_size stride_h = get_stride_h();
+    vit_size stride_w = get_stride_w();
+
+    // printf("executing the GPUConv2d memory forward\n");
+    // x_in.print();
+    assert(C == in_channels);
+    assert(gpu_kernel.get_C() == out_channels);
+    assert(gpu_kernel.get_B() == in_channels);
+    if (get_use_bias()) {
+        assert(gpu_bias.get_DIM() == out_channels);
+    }
+
+    //kernel.get_H() = -get_W() = 16 which is also the stride
+    assert( (H-P_H) % stride_h  == 0);
+    vit_size out_h = ( (H-P_H) / stride_h ) + 1;
+
+    assert( (W-P_W) % stride_w == 0);
+    vit_size out_w = ( (W-P_W) / stride_w ) + 1;
+
+    //create as many streams as max 32 or the number of patches
+    //set as many SM: fetch the SM.
+    u_int stream_n = out_h * out_w < 32 ? out_h * out_w : 32;
+    cudaStream_t streams[stream_n];
+    cublasHandle_t cublas_handle[stream_n];
+
+    //create the class and initialize the stream
+	gettimeofday(&tik, (struct timezone*)0);    
+    streams[0] = stream;
+    cublas_handle[0] = cublasH; 
+    for (int i = 1; i < stream_n; ++i){
+        CUDA_CHECK( cudaStreamCreate(&streams[i]));
+        CUBLAS_CHECK(cublasCreate(&cublas_handle[i]));
+        CUBLAS_CHECK(cublasSetStream(cublas_handle[i], streams[i]));
+    }
+    gettimeofday(&tok, (struct timezone*)0);
+    elapsed_time = ((tok.tv_sec-tik.tv_sec)*1.e6+(tok.tv_usec-tik.tv_usec));
+    time.preprocess.push_back(elapsed_time);
+    
+    // iterate over all the channels and launch all the kernels
+    // vit_float val = 0.0;
+    vit_size x_stride = 0;
+    vit_size k_stride = 0;
+    vit_size res_stride = 0;
+
+    vit_size threads_per_block = 128;
+    vit_size blocks_n = ((P_H * P_W * C) / threads_per_block) + 1;
+    
+    vit_float * d_result;
+    // Allocate the memory for the computation
+    gettimeofday(&tik, (struct timezone*)0);    
+    CUDA_CHECK(cudaMalloc(&d_result, sizeof(vit_float) * B * out_channels * out_h * out_w));  
+    gettimeofday(&tok, (struct timezone*)0);
+    elapsed_time = ((tok.tv_sec-tik.tv_sec)*1.e6+(tok.tv_usec-tik.tv_usec));
+    time.preprocess.push_back(elapsed_time);
+  
+    vit_size stream_idx = 0;
+    for (int batch=0;batch<B;++batch) {
+        for (int y_c=0;y_c<out_channels;++y_c) {
+            // Iterate over all the patches (14x14)
+            for (int y_h=0;y_h<out_h;++y_h) {
+                for (int y_w=0;y_w<out_w;++y_w) {
+                    if(stream_idx == stream_n)
+                        stream_idx = 0;
+
+                    // val = get_use_bias() ? gpu_bias.at(y_c) : 0;
+                    
+                    //compute the convolution of the patch for the channel
+                    x_stride = y_w * P_H * P_W * C + y_h * P_H * P_W * C * out_w + //patches
+                        batch * P_H * P_W * C * out_h * out_w;
+                    k_stride = P_H * P_W * C * y_c;
+                    res_stride = y_c + out_channels * y_w + out_channels * out_w * y_h + 
+                        batch * out_channels * out_h * out_w;
+                    // printf("Iteration ch:%d - ", y_c);
+                    // printf("Iteration patch:[%d,%d] - %d\n", y_w,y_h, res_stride);
+                    // if (cublas_handle[stream_idx] == nullptr) {
+                    //     std::cerr << "Using null cuBLAS handle at stream " << stream_idx << std::endl;
+                    // }
+
+                    CUBLAS_CHECK(
+                        cublasSdot(
+                            cublas_handle[stream_idx],
+                            P_H * P_W * C,
+                            x_in.get_d_data() + x_stride,1,
+                            d_kernel + k_stride,1,
+                            d_result + res_stride
+                        )
+                    );
+                    //bias case, schedule a sum kernel
+                    if(get_use_bias()){
+                        addScalarKernel<<<threads_per_block,blocks_n,0,streams[stream_idx]>>>( d_result + res_stride,gpu_bias.at(y_c), P_H * P_W * C);
+                    }
+                    ++stream_idx;
+                }
+            }
+        }
+    }
+
+    vit_float * h_y = (vit_float *)malloc(sizeof(vit_float) * B * out_channels * out_h * out_w);
+    cudaDeviceSynchronize();
+    CUDA_CHECK( cudaMemcpy(h_y,d_result,sizeof(vit_float) * B * out_channels * out_h * out_w, cudaMemcpyDeviceToHost));
+    
+    PictureBatch y(h_y,B * out_channels * out_h * out_w,B, out_channels, out_h, out_w);
+    x_out = std::move(y);
+    // Cleanup
+    for (int i = 1; i < stream_n; ++i)
+        CUDA_CHECK(cudaStreamDestroy(streams[i]));
+}

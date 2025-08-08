@@ -17,10 +17,13 @@ class GPUConv2d : public Conv2d
         void single_forward(GPUPictureBatch& x_in, PictureBatch& x_out);
         void unified_forward(GPUPictureBatch& x_in, PictureBatch& x_out);
         void memory_forward(GPUPictureBatch& x_in, PictureBatch& x_out);
-        void unified_timed_forward(GPUPictureBatch& x_in, PictureBatch& x_out);
+        void time_memory_forward(GPUPictureBatch& x_in, PictureBatch& x_out, benchmark_time& time);
         // void memory_timed_forward(GPUPictureBatch& x_in, PictureBatch& x_out);
         
     public:
+        GPUConv2d(
+            conv_kernel_shape kernel_shape, vit_bool _use_bias=true
+        );
         GPUConv2d(
             vit_size _in_channels, vit_size _out_channels, conv_kernel_shape kernel_shape, vit_bool _use_bias=true
         );
@@ -44,7 +47,7 @@ class GPUConv2d : public Conv2d
         void set_handle(cublasHandle_t in_cublasH);
         //Load the kernels
         void move_kernel(PictureBatch& _kernel);
-        void move_bias(RowVector& _bias);
+        void move_bias(RowVector& _bias, vit_bool on_gpu = false);
         //Device memory free
         void kernel_free();
         void bias_free();

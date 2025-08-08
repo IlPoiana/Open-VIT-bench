@@ -117,6 +117,12 @@ This section is for explain briefly how are made and how to use the Accelerated 
 > Actually is implemented only the Conv2d kernels used in the patch embedder.
 
 ## Conv2d
+To execute the tests run
+```bash
+make test_bin/test_gpu_conv2d.exe
+./test_bin/test_gpu_conv2d.exe <level>
+```
+where `level` is a value between 0-2 that indicates which kernel I want to launch. (0 single_channel, 1 unified or 2 stream parallelized).
 
 ## Norm (Layer Norm)
 

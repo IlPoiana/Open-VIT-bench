@@ -15,6 +15,8 @@ TEST_BIN_FOLDER := test_bin
 TEST_OBJ_FOLDER := test_obj
 TEST_SRC_FOLDER := test_src
 
+GPU_BENCH_FOLDER := gpu_benchmark
+
 CUDA_FLAGS := -arch=sm_50 -lcublas
 
 
@@ -57,6 +59,8 @@ $(OBJ_FOLDER)/cuda_utils.o \
 : $(OBJ_FOLDER)/%.o : $(GPU_SRC_FOLDER)/%.cu
 	nvcc -c $(CUDA_FLAGS) $^ -o $@
 
+# CUSTOM AND BENCH TARGET
+# CUSTOM
 obj/cuBLAS.o : $(OBJ_FOLDER)/datatypes.o \
 $(OBJ_FOLDER)/modules.o \
 $(OBJ_FOLDER)/mlp.o \
@@ -69,6 +73,11 @@ $(OBJ_FOLDER)/utils.o \
 $(OBJ_FOLDER)/gpu_conv2d.o \
 $(OBJ_FOLDER)/gpu_datatypes.o 
 	nvcc $(CUDA_FLAGS) $(GPU_SRC_FOLDER)/cuBLAS.cu $^ -o $(OBJ_FOLDER)/cuBLAS.o
+
+# BENCH
+$(OBJ_FOLDER)/bench_conv2d.o \
+: $(OBJ_FOLDER)/%.o : $(GPU_BENCH_FOLDER)/%.cu
+	nvcc -c $(CUDA_FLAGS) $^ -o $@
 
 
 # GPU TEST OBJ
@@ -95,6 +104,23 @@ $(OBJ_FOLDER)/gpu_conv2d.o \
 $(OBJ_FOLDER)/gpu_datatypes.o \
 $(OBJ_FOLDER)/cuda_utils.o \
 $(TEST_OBJ_FOLDER)/%.o
+	nvcc $(CUDA_FLAGS) $^ -o $@
+
+$(TEST_BIN_FOLDER)/bench_conv2d.exe : \
+\
+$(OBJ_FOLDER)/datatypes.o \
+$(OBJ_FOLDER)/modules.o \
+$(OBJ_FOLDER)/mlp.o \
+$(OBJ_FOLDER)/conv2d.o \
+$(OBJ_FOLDER)/attention.o \
+$(OBJ_FOLDER)/block.o \
+$(OBJ_FOLDER)/patch_embed.o \
+$(OBJ_FOLDER)/vision_transformer.o \
+$(OBJ_FOLDER)/utils.o \
+$(OBJ_FOLDER)/gpu_conv2d.o \
+$(OBJ_FOLDER)/gpu_datatypes.o \
+$(OBJ_FOLDER)/cuda_utils.o \
+$(OBJ_FOLDER)/bench_conv2d.o 
 	nvcc $(CUDA_FLAGS) $^ -o $@
 
 # Executables
