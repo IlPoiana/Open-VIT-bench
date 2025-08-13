@@ -152,7 +152,7 @@ benchmark_time timed_unified_channel(vit_float * x_data, vit_float * k_data, pic
     return time;
 }
 
-benchmark_time timed_parallelized(vit_float * x_data, vit_float * k_data, picture_shape x_shape, conv_kernel_shape kernel_shape, vit_float * bias)  {
+benchmark_time timed_parallelized(vit_float * x_data, vit_float * k_data, picture_shape x_shape, conv_kernel_shape kernel_shape, vit_float * bias, vit_size max_streams)  {
     // cout << "Test 2D Convolution" << endl;
 
 	vector<float> preprocess_time;
@@ -197,7 +197,7 @@ benchmark_time timed_parallelized(vit_float * x_data, vit_float * k_data, pictur
 
 
     PictureBatch y;
-    c2d.timed_forward(x, y, 2,time); // compute the forward and save it to y
+    c2d.timed_forward(x, y, 2,time, max_streams); // compute the forward and save it to y
     // cout << "finished forward" << endl;
     // vector<string> preprocess_names = {"linearize","create_streams","malloc"};
     // print_json_time(time,preprocess_names);
@@ -211,9 +211,6 @@ benchmark_time timed_parallelized(vit_float * x_data, vit_float * k_data, pictur
 
 
 int main(int argc, char* argv[]){
-    //This will be fetched from a config file
-    const u_int runs_n = 2;
-    const u_int warm_up = 1;
 	
     assert(argc > 3);
     
@@ -234,45 +231,50 @@ int main(int argc, char* argv[]){
     // return 0;
 	assert(level < 3);
 
+    int max_streams = MAX_STREAMS_CONV2D;
+    if(argc == 5){
+        max_streams = atoi(argv[4]);
+        assert(max_streams > 0);
+    }
     int k_s[6];
     vit.get_kernel_shape(k_s);
     conv_kernel_shape kernel_shape(k_s);
     picture_shape x_shape = {(int)pic.get_B(),(int)pic.get_C(),(int)pic.get_H(),(int)pic.get_W()};
-    
+    // printf("max streams:%d\n", max_streams);
     benchmark_time single_time;
     switch (level){
 		case 0:
             cout << "[" << endl;
-            for(u_int idx = 0; idx < warm_up + runs_n; idx++){
+            for(u_int idx = 0; idx < WARM_UP + RUNS_N; idx++){
                 single_time = timed_single_channel(pic.get_data(),vit.get_conv2d_kernel(), x_shape,kernel_shape, vit.get_conv2d_bias());
-                if(idx >= warm_up){
+                if(idx >= WARM_UP){
                     cout << "{" << endl;
                     print_json_time(single_time,{"gpu_allocation","cpu_allocation"});
-                    (idx != warm_up + runs_n - 1) ? (cout << "}," << endl) : cout << "}" << endl;
+                    (idx != WARM_UP + RUNS_N - 1) ? (cout << "}," << endl) : cout << "}" << endl;
                 }
             }
             cout << "]" << endl;
             break;
 		case 1:
             cout << "[" << endl;
-            for(u_int idx = 0; idx < warm_up + runs_n; idx++){
+            for(u_int idx = 0; idx < WARM_UP + RUNS_N; idx++){
                 single_time = timed_unified_channel(pic.get_data(),vit.get_conv2d_kernel(), x_shape,kernel_shape, vit.get_conv2d_bias());
-                if(idx >= warm_up){
+                if(idx >= WARM_UP){
                     cout << "{" << endl;
                     print_json_time(single_time,{"linearize"});
-                    (idx != warm_up + runs_n - 1) ? (cout << "}," << endl) : cout << "}" << endl;cout << "}," << endl;
+                    (idx != WARM_UP + RUNS_N - 1) ? (cout << "}," << endl) : cout << "}" << endl;
                 }
             }
             cout << "]" << endl;
 			break;
 		default:
 			cout << "[" << endl;
-            for(u_int idx = 0; idx < warm_up + runs_n; idx++){
-                single_time = timed_parallelized(pic.get_data(),vit.get_conv2d_kernel(), x_shape,kernel_shape, vit.get_conv2d_bias());
-                if(idx >= warm_up){
+            for(u_int idx = 0; idx < WARM_UP + RUNS_N; idx++){
+                single_time = timed_parallelized(pic.get_data(),vit.get_conv2d_kernel(), x_shape,kernel_shape, vit.get_conv2d_bias(), max_streams);
+                if(idx >= WARM_UP){
                     cout << "{" << endl;
                     print_json_time(single_time,{"linearize","create_streams","malloc"});
-                    (idx != warm_up + runs_n - 1) ? (cout << "}," << endl) : cout << "}" << endl;
+                    (idx != WARM_UP + RUNS_N - 1) ? (cout << "}," << endl) : cout << "}" << endl;
                 }
             }
             cout << "]" << endl;

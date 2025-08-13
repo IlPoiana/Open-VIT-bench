@@ -182,7 +182,7 @@ void GPUConv2d:: test_forward(GPUPictureBatch& x_in, PictureBatch& x_out, u_int 
 } 
 
 //Change to CPU eval, single and unified returns only when all cuda op are finished
-void GPUConv2d:: timed_forward(GPUPictureBatch& x_in, PictureBatch& x_out, u_int level, benchmark_time& time){
+void GPUConv2d:: timed_forward(GPUPictureBatch& x_in, PictureBatch& x_out, u_int level, benchmark_time& time, vit_size max_streams){
     // cudaEvent_t start;cudaEvent_t stop;
     // CUDA_CHECK(cudaEventCreate(&start));
     // CUDA_CHECK(cudaEventCreate(&stop));
@@ -201,7 +201,7 @@ void GPUConv2d:: timed_forward(GPUPictureBatch& x_in, PictureBatch& x_out, u_int
             break;
         default:
             gettimeofday(&tik, (struct timezone*)0);            
-            time_memory_forward(x_in, x_out, time);
+            time_memory_forward(x_in, x_out, time, max_streams);
             gettimeofday(&tok, (struct timezone*)0);
         break;
     }
@@ -378,8 +378,8 @@ void GPUConv2d::unified_forward(GPUPictureBatch& x_in, PictureBatch& x_out) {
 // fully parallelize forward that copies the result only once
 void GPUConv2d::memory_forward(GPUPictureBatch& x_in, PictureBatch& x_out)  {
     
-    vit_size in_channels = get_in_channels(); //2
-    vit_size out_channels = get_out_channels(); //1
+    vit_size in_channels = get_in_channels(); 
+    vit_size out_channels = get_out_channels();
 
     vit_size B = x_in.get_B();
     vit_size C = x_in.get_C();
@@ -486,7 +486,7 @@ void GPUConv2d::memory_forward(GPUPictureBatch& x_in, PictureBatch& x_out)  {
 }
 
 // fully parallelize forward that copies the result only once
-void GPUConv2d::time_memory_forward(GPUPictureBatch& x_in, PictureBatch& x_out,benchmark_time& time)  {
+void GPUConv2d::time_memory_forward(GPUPictureBatch& x_in, PictureBatch& x_out,benchmark_time& time, vit_size max_streams)  {
     
     //time related variables
     struct timeval tik={0,0};
@@ -521,9 +521,9 @@ void GPUConv2d::time_memory_forward(GPUPictureBatch& x_in, PictureBatch& x_out,b
     assert( (W-P_W) % stride_w == 0);
     vit_size out_w = ( (W-P_W) / stride_w ) + 1;
 
-    //create as many streams as max 32 or the number of patches
+    //create as many streams as max_streams or the number of patches
     //set as many SM: fetch the SM.
-    u_int stream_n = out_h * out_w < 32 ? out_h * out_w : 32;
+    u_int stream_n = out_h * out_w < max_streams ? out_h * out_w : max_streams;
     cudaStream_t streams[stream_n];
     cublasHandle_t cublas_handle[stream_n];
 

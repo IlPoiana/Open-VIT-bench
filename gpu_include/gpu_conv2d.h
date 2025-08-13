@@ -17,7 +17,7 @@ class GPUConv2d : public Conv2d
         void single_forward(GPUPictureBatch& x_in, PictureBatch& x_out);
         void unified_forward(GPUPictureBatch& x_in, PictureBatch& x_out);
         void memory_forward(GPUPictureBatch& x_in, PictureBatch& x_out);
-        void time_memory_forward(GPUPictureBatch& x_in, PictureBatch& x_out, benchmark_time& time);
+        void time_memory_forward(GPUPictureBatch& x_in, PictureBatch& x_out, benchmark_time& time, vit_size max_streams);
         // void memory_timed_forward(GPUPictureBatch& x_in, PictureBatch& x_out);
         
     public:
@@ -56,7 +56,7 @@ class GPUConv2d : public Conv2d
         // void forward(const PictureBatch& x_in, PictureBatch& x_out) const;
         //gpu tests
         void test_forward(GPUPictureBatch& x_in, PictureBatch& x_out, u_int level);
-        void timed_forward(GPUPictureBatch& x_in, PictureBatch& x_out, u_int level, benchmark_time& time);
+        void timed_forward(GPUPictureBatch& x_in, PictureBatch& x_out, u_int level, benchmark_time& time, vit_size max_streams = 32);
         // void forward(GPUPictureBatch x_in, GPUPictureBatch x_out);
 
 };

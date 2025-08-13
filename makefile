@@ -17,7 +17,8 @@ TEST_SRC_FOLDER := test_src
 
 GPU_BENCH_FOLDER := gpu_benchmark
 
-CUDA_FLAGS := -arch=sm_50 -lcublas
+ARCH ?= -arch=sm_50
+CUDA_FLAGS := $(ARCH) -lcublas
 
 
 all : vit
@@ -26,6 +27,9 @@ clean :
 	rm -rf ./$(OBJ_FOLDER)/* ./$(BIN_FOLDER)/* ./$(OMP_OBJ_FOLDER)/* ./$(OMP_BIN_FOLDER)/* \
 		   ./$(TEST_OBJ_FOLDER)/* ./$(TEST_BIN_FOLDER)/* \
 		   ./out_comparison/* ./logs/*
+
+clean_data :
+	rm -rf ./data/*
 
 clean_everything :
 	rm -rf ./$(OBJ_FOLDER)/* ./$(BIN_FOLDER)/* ./$(OMP_OBJ_FOLDER)/* ./$(OMP_BIN_FOLDER)/* \

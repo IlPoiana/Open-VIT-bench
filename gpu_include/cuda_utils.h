@@ -18,6 +18,10 @@ do {                                                                            
         }                                                                                          \
     } while (0)
 
+#define WARM_UP 2
+#define RUNS_N 8
+#define MAX_STREAMS_CONV2D 32
+
 using namespace std;
 
 struct picture_shape {
