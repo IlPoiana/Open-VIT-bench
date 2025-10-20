@@ -7,9 +7,12 @@ from collections import defaultdict
 import numpy as np
 import matplotlib.pyplot as plt
 
+KERNEL_LEVELS = {
+    "conv2d": 3,
+}
 PATTERN = re.compile(r"^(\d+)-(\d+)-(\d+)\.json$")  # batch-size-k_type.json
 
-def load_kernel_means(directory: str, k_type: str, size_filter: str | None):
+def load_kernel_means(directory: str, k_type, size_filter: str | None):
     """
     Returns:
       dict[size_str] -> (list of batch_sizes, list of kernel_means)
@@ -21,7 +24,7 @@ def load_kernel_means(directory: str, k_type: str, size_filter: str | None):
         if not m:
             continue
         batch_str, size_str, k_str = m.groups()
-        if k_str != k_type:
+        if k_str != str(k_type):
             continue
         if size_filter is not None and size_str != size_filter:
             continue
@@ -46,7 +49,7 @@ def load_kernel_means(directory: str, k_type: str, size_filter: str | None):
 
     return grouped
 
-def plot_and_save(grouped, k_type: str, out_path: str):
+def plot_and_save_old(grouped, k_type: str, out_path: str):
     if not grouped:
         raise SystemExit("No matching files found to plot.")
 
@@ -69,23 +72,52 @@ def plot_and_save(grouped, k_type: str, out_path: str):
     plt.savefig(out_path, dpi=200)
     print(f"Saved plot to: {out_path}")
 
+def plot_and_save(grouped_list, out_path: str):
+    if not grouped_list:
+        raise SystemExit("No matching files found to plot.")
+
+    plt.figure(figsize=(9, 6))
+    for grouped in grouped_list:
+        # one line per size
+        for size_str, d in sorted(grouped.items(), key=lambda kv: int(kv[0])):
+            if not d["batches"]:
+                continue
+            label = f"size={size_str}"
+            print(d)
+            plt.plot(d["batches"], d["means"], marker="o", label=label)
+
+    #plt.axis("equal")  # same scale for x and y
+    plt.xlabel("Batch")
+    plt.ylabel("Elapsed time")
+    plt.yscale("log")
+    plt.grid(True, which="both", linestyle="--", linewidth=0.5)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=200)
+    print(f"Saved plot to: {out_path}")
+
+
 def main():
     p = argparse.ArgumentParser(description="Plot average kernel vs batch size.")
     p.add_argument("directory", help="Directory containing batch-size-k_type.json files")
-    p.add_argument("k_type", help="k_type to filter (e.g., 2)")
+    p.add_argument("--block", default= "conv2d",help="k_type to filter (e.g., 2)")
     p.add_argument("--size", help="Optional size filter (middle number, e.g., 64)")
     p.add_argument("--out", help="Output PNG path (default auto-generated)")
     args = p.parse_args()
 
-    grouped = load_kernel_means(args.directory, args.k_type, args.size)
+    plots = []
+    for k_type in range(KERNEL_LEVELS[args.block]):
+        grouped = load_kernel_means(args.directory, k_type, args.size)
+        plots.append(grouped)
 
     if args.out:
         out_path = args.out
     else:
-        tag = f"all-sizes" if args.size is None else f"size-{args.size}"
-        out_path = f"kernel_vs_batch_k{args.k_type}_{tag}.png"
+        tag = f"-all-sizes" if args.size is None else f"-size-{args.size}"
+        out_path = f"batch_sizes_{args.block}{tag}.png"
 
-    plot_and_save(grouped, args.k_type, out_path)
+    plot_and_save(plots, out_path)
+
 
 if __name__ == "__main__":
     main()

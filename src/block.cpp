@@ -10,7 +10,6 @@
 #include <chrono>
 
 
-
 Block::Block(
     vit_size _dim,
     vit_size _num_heads,
@@ -74,7 +73,116 @@ vit_float Block::get_mlp_ratio() const {
     return mlp_ratio;
 }
 
-void Block::move_norm1(LayerNorm& _norm1) {
+layer_data Block::get_norm1()
+{
+    layer_data data(
+        norm1.get_g(),
+        norm1.get_bias(),
+        norm1.get_eps(),
+        norm1.get_use_bias()
+    );
+    return data;
+}
+layer_shape Block::get_norm1_shape()
+{
+    layer_shape data(      
+        norm1.get_g_dim(), // get_in_chans() //should be for single element case
+        norm1.get_g_dim()
+    );
+    return data;
+}
+
+attn_data Block::get_attention()
+{
+    attn_data data(
+        attn.get_q_gen(),
+        attn.get_k_gen(),
+        attn.get_v_gen(),
+        attn.get_q_norm(), // subject to use_qk_norm
+        attn.get_k_norm(), // subject to use_qk_norm
+        attn.get_proj(),
+        attn.get_dim(),
+        attn.get_num_heads(),
+        attn.get_head_dim(),
+        attn.get_scale(),
+        attn.get_use_qk_norm()
+    );
+    return data;
+}
+attn_shape Block::get_attention_shape()
+{
+    attn_shape data(
+        attn.get_q_gen_shape(),
+        attn.get_k_gen_shape(),
+        attn.get_v_gen_shape(),
+        attn.get_q_norm_shape(),
+        attn.get_k_norm_shape(),
+        attn.get_proj_shape()
+    );
+    return data;
+}
+// TO DO
+
+scale_data Block::get_ls1()
+{
+    scale_data data(
+        ls1.get_dim(),
+        ls1.get_val()
+    );
+    return data;
+}
+layer_data Block::get_norm2()
+{
+    layer_data data(
+        norm2.get_g(),
+        norm2.get_bias(),
+        norm2.get_eps(),
+        norm2.get_use_bias()
+    );
+    return data;
+}
+layer_shape Block::get_norm2_shape()
+{
+    layer_shape data(      
+        norm2.get_g_dim(), // get_in_chans() //should be for single element case
+        norm2.get_g_dim()
+    );
+    return data;}
+mlp_data Block::get_mlp()
+{
+    mlp_data data(
+        mlp.get_in_features(),
+        mlp.get_hidden_features(),
+        mlp.get_out_features(),
+        mlp.get_use_norm(),
+        mlp.get_fc1(),
+        mlp.get_norm(),
+        mlp.get_act(),
+        mlp.get_fc2()
+    );
+    return data;
+}
+mlp_shape Block::get_mlp_shape()
+{
+    mlp_shape data(
+        mlp.get_fc1_shape(),
+        mlp.get_norm_shape(),
+        mlp.get_fc2_shape()
+    );
+    return data;
+}
+scale_data Block::get_ls2()
+{
+    scale_data data(    
+        ls2.get_dim(),
+        ls2.get_val()
+    );
+    return data;
+}
+
+//
+void Block::move_norm1(LayerNorm &_norm1)
+{
     norm1 = std::move(_norm1);
 }
 

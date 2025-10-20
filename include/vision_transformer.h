@@ -8,8 +8,6 @@
 #include "block.h"
 #include "patch_embed.h"
 
-
-
 class VisionTransformer {
 private:
     vit_size num_classes;
@@ -89,10 +87,40 @@ public:
     vit_bool get_use_pre_norm() const;
     vit_bool get_use_fc_norm() const;
     vit_bool get_dynamic_img_size() const;
+    //Patch Embedder
     vit_float * get_conv2d_kernel();
     vit_float * get_conv2d_bias();
     void get_kernel_shape(int kernel_shape[6]);
+    layer_data get_patch_layer_norm();
+    layer_shape get_patch_layer_shape();
+    vit_bool get_layer_use_norm();
+    
+    vit_float *  get_cls_token();
+    vit_size get_cls_token_shape();
+    
+    vit_float * get_reg_token();
+    void get_reg_token_shape(int reg_token_shape[2]);
+    vit_float * get_pos_embed();
+    void get_pos_embed_shape(int pos_embed_shape[2]);
 
+
+    layer_data get_pre_norm();
+    layer_shape get_pre_norm_shape();
+    layer_data get_norm(); // TO DO
+    layer_shape get_norm_shape();
+    layer_data get_fc_norm();// TO DO
+    layer_shape get_fc_norm_shape();
+
+
+
+    std::vector<blocks_data> get_blocks();
+    std::vector<blocks_shape> get_blocks_shape();
+    vit_size get_blocks_number();
+    
+    linear_data get_head();
+    linear_shape get_head_shape();
+
+    
     void move_cls_token(RowVector _cls_token);
     void move_reg_token(Matrix _reg_token);
     void move_pos_embed(Matrix _pos_embed);

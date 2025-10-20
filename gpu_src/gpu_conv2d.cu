@@ -1,7 +1,7 @@
-// #include "../include/conv2d.h"
-// #include "../include/datatypes.h"
+/*
+DEPRECATED
+*/
 #include "../gpu_include/gpu_conv2d.h"
-// #include "../gpu_include/gpu_datatypes.h"
 
 #include <utility>
 #include <assert.h>
@@ -418,6 +418,7 @@ void GPUConv2d::memory_forward(GPUPictureBatch& x_in, PictureBatch& x_out)  {
         CUDA_CHECK( cudaStreamCreate(&streams[i]));
         CUBLAS_CHECK(cublasCreate(&cublas_handle[i]));
         CUBLAS_CHECK(cublasSetStream(cublas_handle[i], streams[i]));
+        cublasSetPointerMode(cublas_handle[i], CUBLAS_POINTER_MODE_DEVICE);
     }// Allocate the memory for the computation
 
     // iterate over all the channels and launch all the kernels
@@ -535,6 +536,7 @@ void GPUConv2d::time_memory_forward(GPUPictureBatch& x_in, PictureBatch& x_out,b
         CUDA_CHECK( cudaStreamCreate(&streams[i]));
         CUBLAS_CHECK(cublasCreate(&cublas_handle[i]));
         CUBLAS_CHECK(cublasSetStream(cublas_handle[i], streams[i]));
+        cublasSetPointerMode(cublas_handle[i], CUBLAS_POINTER_MODE_DEVICE);
     }
     gettimeofday(&tok, (struct timezone*)0);
     elapsed_time = ((tok.tv_sec-tik.tv_sec)*1.e6+(tok.tv_usec-tik.tv_usec));

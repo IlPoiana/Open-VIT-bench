@@ -9,8 +9,7 @@
 #include <utility>
 #include <assert.h>
 #include <chrono>
-
-
+#include <iostream>
 
 VisionTransformer::VisionTransformer(
     vit_size img_size_h,
@@ -178,8 +177,198 @@ vit_float * VisionTransformer::get_conv2d_bias() {
 }
 
 void VisionTransformer::get_kernel_shape(int kernel_shape[6]){
-    return patch_embed.get_kernel_dimensions(kernel_shape);
+    patch_embed.get_kernel_dimensions(kernel_shape);
 }
+
+// HERE
+
+layer_data VisionTransformer::get_patch_layer_norm(){
+    std::cout << patch_embed.get_layer_g()[0] << std::endl;
+    std::cout << patch_embed.get_layer_bias()[0] << std::endl;
+    // patch_embed.get_layer_eps(),
+    // patch_embed.get_use_bias()
+    layer_data data(
+        patch_embed.get_layer_g(),
+        patch_embed.get_layer_bias(),
+        patch_embed.get_layer_eps(),
+        patch_embed.get_use_bias()
+    );
+    return data;
+}
+
+layer_shape VisionTransformer::get_patch_layer_shape(){
+
+    layer_shape data(      
+        patch_embed.get_layer_g_size(), // get_in_chans() //should be for single element case
+        patch_embed.get_layer_g_size()
+    );
+    return data;
+}
+
+vit_bool VisionTransformer::get_layer_use_norm()
+{
+    return patch_embed.get_use_norm();
+}
+vit_float *VisionTransformer::get_cls_token()
+{
+    return cls_token.get_data();
+} 
+
+vit_size VisionTransformer::get_cls_token_shape()
+{
+    return cls_token.get_DIM();
+}
+
+vit_float *VisionTransformer::get_reg_token()
+{
+    return reg_token.get_data();
+}
+
+void VisionTransformer::get_reg_token_shape(int reg_token_shape[2])
+{
+    reg_token_shape[0] = reg_token.get_ROWS();//row
+    reg_token_shape[1] = reg_token.get_COLS();// col
+}
+
+vit_float *VisionTransformer::get_pos_embed()
+{
+    return pos_embed.get_data();
+}
+
+void VisionTransformer::get_pos_embed_shape(int pos_embed_shape[2])
+{
+    pos_embed_shape[0] = pos_embed.get_ROWS();//row
+    pos_embed_shape[1] = pos_embed.get_COLS();// col
+
+}
+
+layer_data VisionTransformer::get_pre_norm()
+{
+    layer_data data(
+        pre_norm.get_g(),
+        pre_norm.get_bias(),
+        pre_norm.get_eps(),
+        pre_norm.get_use_bias()
+    );
+    return data;
+}
+
+layer_shape VisionTransformer::get_pre_norm_shape()
+{
+    layer_shape data(      
+        pre_norm.get_g_dim(), // get_in_chans() //should be for single element case
+        pre_norm.get_g_dim()
+    );
+    return data;
+}
+
+layer_data VisionTransformer::get_norm()
+{
+    layer_data data(
+        norm.get_g(),
+        norm.get_bias(),
+        norm.get_eps(),
+        norm.get_use_bias()
+    );
+    return data;
+}
+
+layer_shape VisionTransformer::get_norm_shape()
+{
+    layer_shape data(      
+        norm.get_g_dim(), // get_in_chans() //should be for single element case
+        norm.get_g_dim()
+    );
+    return data;
+}
+
+layer_data VisionTransformer::get_fc_norm()
+{
+    layer_data data(
+        fc_norm.get_g(),
+        fc_norm.get_bias(),
+        fc_norm.get_eps(),
+        fc_norm.get_use_bias()
+    );
+    return data;
+}
+
+layer_shape VisionTransformer::get_fc_norm_shape()
+{
+    layer_shape data(      
+        fc_norm.get_g_dim(), // get_in_chans() //should be for single element case
+        fc_norm.get_g_dim()
+    );
+    return data;
+}
+// TO DO
+std::vector<blocks_data> VisionTransformer::get_blocks()
+{
+    std::vector<blocks_data> data;
+    for (size_t i = 0; i < blocks.size(); i++)
+    {
+        blocks_data single_block(
+            blocks[i].get_dim(),
+            blocks[i].get_num_heads(),
+            blocks[i].get_mlp_ratio(),
+            blocks[i].get_norm1(),
+            blocks[i].get_attention(),
+            blocks[i].get_ls1(),
+            blocks[i].get_norm2(),
+            blocks[i].get_mlp(),
+            blocks[i].get_ls2()
+        );
+        data.push_back(single_block);
+    }
+    return data;
+    
+}
+
+std::vector<blocks_shape> VisionTransformer::get_blocks_shape()
+{
+    std::vector<blocks_shape> data;
+    for (size_t i = 0; i < blocks.size(); i++)
+    {
+        blocks_shape single_block(
+            blocks[i].get_norm1_shape(),
+            blocks[i].get_attention_shape(),
+            blocks[i].get_mlp_shape(),
+            blocks[i].get_norm2_shape()
+        );
+        data.push_back(single_block);
+    }
+    return data;
+}
+
+vit_size VisionTransformer::get_blocks_number()
+{
+    return blocks.size();
+}
+linear_data VisionTransformer::get_head()
+{
+    linear_data data(
+        head.get_A(),
+        head.get_b(),
+        head.get_in_features(),
+        head.get_out_features(),
+        head.get_use_bias()  
+    );
+    return data;
+}
+
+linear_shape VisionTransformer::get_head_shape()
+{
+    int mtx_shape[2];
+    head.get_A_shape(mtx_shape);
+    linear_shape data(
+        mtx_shape[0],
+        mtx_shape[1],
+        head.get_b_dim()
+    );
+    return data;
+}
+
+//
 
 void VisionTransformer::move_cls_token(RowVector _cls_token) {
     cls_token = std::move(_cls_token);

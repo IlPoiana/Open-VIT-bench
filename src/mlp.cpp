@@ -7,7 +7,6 @@
 #include <assert.h>
 
 
-
 Mlp::Mlp(
     vit_size _in_features,
     vit_size _hidden_features,
@@ -71,7 +70,75 @@ vit_bool Mlp::get_use_norm() const {
     return use_norm;
 }
 
-void Mlp::move_fc1(Linear& _fc1) {
+//TO DO
+linear_data Mlp::get_fc1()
+{
+    linear_data data(
+            fc1.get_A(),
+            fc1.get_b(),
+            fc1.get_in_features(),
+            fc1.get_out_features(),
+            fc1.get_use_bias()  
+        );
+    return data;
+}
+linear_shape Mlp::get_fc1_shape()
+{
+    int mtx_shape[2];
+    fc1.get_A_shape(mtx_shape);
+    linear_shape data(
+        mtx_shape[0],
+        mtx_shape[1],
+        fc1.get_b_dim()
+    );
+    return data;
+}
+vit_float (*Mlp::get_act() const)(vit_float)
+{
+    return act.get_act();
+}
+
+layer_data Mlp::get_norm(){
+    layer_data data(
+        norm.get_g(),
+        norm.get_bias(),
+        norm.get_eps(),
+        norm.get_use_bias()
+    );
+    return data;
+}
+layer_shape Mlp::get_norm_shape(){
+    layer_shape data(      
+        norm.get_g_dim(), // get_in_chans() //should be for single element case
+        norm.get_g_dim()
+    );
+    return data;
+};
+linear_data Mlp::get_fc2(){
+    linear_data data(
+            fc2.get_A(),
+            fc2.get_b(),
+            fc2.get_in_features(),
+            fc2.get_out_features(),
+            fc2.get_use_bias()  
+        );
+    return data;
+}
+linear_shape Mlp::get_fc2_shape()
+{
+    int mtx_shape[2];
+    fc2.get_A_shape(mtx_shape);
+    linear_shape data(
+        mtx_shape[0],
+        mtx_shape[1],
+        fc2.get_b_dim()
+    );
+    return data;
+};
+
+//
+void Mlp::move_fc1(Linear &_fc1)
+{
     fc1 = std::move(_fc1);
 }
 

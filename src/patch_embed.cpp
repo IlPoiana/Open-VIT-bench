@@ -142,6 +142,26 @@ void PatchEmbed::get_kernel_dimensions(int kernel_shape[6]) {
     return c2d.get_dimensions(kernel_shape);
 }
 
+#include <iostream>
+//getters for LayerNorm 
+vit_float * PatchEmbed::get_layer_g(){
+    std::cout << norm.get_g() << std::endl;
+    return norm.get_g();
+};
+vit_float * PatchEmbed::get_layer_bias(){
+    return norm.get_bias();
+};
+vit_float PatchEmbed::get_layer_eps(){
+    return norm.get_eps();
+};
+vit_bool PatchEmbed::get_use_bias(){
+    return norm.get_use_bias();
+};
+vit_size PatchEmbed::get_layer_g_size(){
+    return norm.get_g_dim();
+};
+
+
 vit_size PatchEmbed::get_feat_ratio() const {
     return patch_size_h>=patch_size_w ? patch_size_h : patch_size_w;
 }

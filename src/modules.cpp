@@ -40,6 +40,7 @@ void Linear::operator()(const Tensor& x_in, Tensor& x_out) const {
     assert(A.get_COLS() == in_features);
     assert(x_in.get_C() == in_features);
     if (use_bias == true) {
+        printf("using bias\n");
         assert(b.get_DIM() == out_features);
     }
 
@@ -50,7 +51,6 @@ void Linear::operator()(const Tensor& x_in, Tensor& x_out) const {
         for (int j=0;j<y.get_N();++j) {
             for (int k=0;k<y.get_C();++k) {
                 cumulate = use_bias==true ? b.at(k) : 0;
-
                 for (int l=0;l<x_in.get_C();++l) {
                     cumulate += x_in.at(i,j,l) * A.at(k,l);
                 }
@@ -73,6 +73,28 @@ vit_size Linear::get_out_features() const {
 
 vit_bool Linear::get_use_bias() const {
     return use_bias;
+}
+
+vit_float *Linear::get_A()
+{
+    return A.get_data();
+}
+
+// 0 ==> ROW, 1 ==> COL
+void Linear::get_A_shape(int a_shape[2])
+{
+    a_shape[0] = A.get_ROWS();
+    a_shape[1] = A.get_COLS();
+}
+
+vit_float *Linear::get_b()
+{
+    return b.get_data();
+}
+
+vit_size Linear::get_b_dim()
+{
+    return b.get_DIM();
 }
 
 void Linear::move_A(Matrix& _A) {
@@ -159,18 +181,18 @@ void LayerNorm::operator()(Tensor& x, vit_size num_heads, vit_size head_dim) con
     vit_float new_val;
     //Batch
     for (int i=0;i<x.get_B();++i) {
-        //Elements (like 196)
+        //Sequence, time aka tokens num (like 196)
         for (int j=0;j<x.get_N();++j) {
             for (int k=0;k<num_heads;++k) {
                 mean = 0.0;
-                //768 typically
+                //(768 / num_heads) typically
                 for (int l=0;l<head_dim;++l) {
                     mean += x.at(i,j, (k*head_dim) + l);
                 }
                 mean /= (float) head_dim;
 
                 var = 0.0;
-                //768 again
+
                 for (int l=0;l<head_dim;++l) {
                     var += std::pow( x.at(i,j, (k*head_dim) + l) - mean, 2);
                 }
@@ -188,6 +210,19 @@ void LayerNorm::operator()(Tensor& x, vit_size num_heads, vit_size head_dim) con
     }
 
 }
+
+vit_float * LayerNorm::get_g(){
+    return g.get_data();
+};
+vit_float * LayerNorm::get_bias(){
+    return b.get_data();
+};
+vit_size LayerNorm::get_g_dim(){
+    return g.get_DIM();
+};
+vit_size LayerNorm::get_bias_dim(){
+    return b.get_DIM();
+};
 
 vit_size LayerNorm::get_normalized_shape() const {
     return normalized_shape;

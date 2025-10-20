@@ -20,15 +20,18 @@ Attention::Attention (
     v_gen(_dim,_dim,use_qkv_bias),
     q_norm(_dim/_num_heads, 0.00001, true),
     k_norm(_dim/_num_heads, 0.00001, true),
-    proj(_dim,_dim,true)
+    //UNCOMMENT
+    // proj(_dim,_dim,true)
+    proj(_dim,_dim,use_qkv_bias)
 {
     assert(_dim % _num_heads == 0); // _dim must be divisible by _num_heads
-
+    
     dim = _dim;
     num_heads = _num_heads;
     head_dim = _dim / _num_heads;
     scale = std::pow(head_dim, -0.5);
     use_qk_norm = _use_qk_norm;
+    printf("use qkv bias %d\n", use_qkv_bias);
 }
 
 Attention::Attention(Attention&& attn) :
@@ -83,6 +86,143 @@ vit_float Attention::get_scale() const {
 
 vit_bool Attention::get_use_qk_norm() const {
    return use_qk_norm;
+}
+
+linear_data Attention::get_q_gen()
+{
+    linear_data data(
+        q_gen.get_A(),
+        q_gen.get_b(),
+        q_gen.get_in_features(),
+        q_gen.get_out_features(),
+        q_gen.get_use_bias()  
+    );
+    return data;
+}
+
+linear_shape Attention::get_q_gen_shape()
+{
+    int mtx_shape[2];
+    q_gen.get_A_shape(mtx_shape);
+    linear_shape data(
+        mtx_shape[0],
+        mtx_shape[1],
+        q_gen.get_b_dim()
+    );
+    return data;
+}
+
+linear_data Attention::get_k_gen()
+{
+    linear_data data(
+        k_gen.get_A(),
+        k_gen.get_b(),
+        k_gen.get_in_features(),
+        k_gen.get_out_features(),
+        k_gen.get_use_bias()  
+    );
+    return data;
+}
+
+linear_shape Attention::get_k_gen_shape()
+{
+    int mtx_shape[2];
+    k_gen.get_A_shape(mtx_shape);
+    linear_shape data(
+        mtx_shape[0],
+        mtx_shape[1],
+        k_gen.get_b_dim()
+    );
+    return data;
+}
+
+linear_data Attention::get_v_gen()
+{
+    linear_data data(
+        v_gen.get_A(),
+        v_gen.get_b(),
+        v_gen.get_in_features(),
+        v_gen.get_out_features(),
+        v_gen.get_use_bias()  
+    );
+    return data;
+}
+
+linear_shape Attention::get_v_gen_shape()
+{
+    int mtx_shape[2];
+    v_gen.get_A_shape(mtx_shape);
+    linear_shape data(
+        mtx_shape[0],
+        mtx_shape[1],
+        v_gen.get_b_dim()
+    );
+    return data;
+}
+
+layer_data Attention::get_q_norm()
+{
+    layer_data data(
+        q_norm.get_g(),
+        q_norm.get_bias(),
+        q_norm.get_eps(),
+        q_norm.get_use_bias()
+    );
+    return data;
+}
+
+layer_shape Attention::get_q_norm_shape()
+{
+    layer_shape data(      
+        q_norm.get_g_dim(), // get_in_chans() //should be for single element case
+        q_norm.get_g_dim()
+    );
+    return data;
+}
+
+layer_data Attention::get_k_norm()
+{
+    layer_data data(
+        k_norm.get_g(),
+        k_norm.get_bias(),
+        k_norm.get_eps(),
+        k_norm.get_use_bias()
+    );
+    return data;
+}
+
+layer_shape Attention::get_k_norm_shape()
+{
+    layer_shape data(      
+        k_norm.get_g_dim(), // get_in_chans() //should be for single element case
+        k_norm.get_g_dim()
+    );
+    return data;
+}
+
+
+linear_data Attention::get_proj()
+{
+    linear_data data(
+        proj.get_A(),
+        proj.get_b(),
+        proj.get_in_features(),
+        proj.get_out_features(),
+        proj.get_use_bias()  
+    );
+    return data;
+}
+
+linear_shape Attention::get_proj_shape()
+{
+    int mtx_shape[2];
+    proj.get_A_shape(mtx_shape);
+    linear_shape data(
+        mtx_shape[0],
+        mtx_shape[1],
+        proj.get_b_dim()
+    );
+    return data;
 }
 
 void Attention::move_qkv_gen(Linear& _q_gen, Linear& _k_gen, Linear& _v_gen) {
@@ -140,19 +280,28 @@ void Attention::from_ifstream(std::ifstream& is) {
 
 void Attention::forward(const Tensor& x_in, Tensor& x_out) const {
     Tensor query, key, value;
+    //UNCOMMENT
     q_gen(x_in, query);
     k_gen(x_in, key);
     v_gen(x_in, value);
-
     if (use_qk_norm == true) {
         q_norm(query, num_heads, head_dim);
         k_norm(key, num_heads, head_dim);
     }
 
+    // multi_head_attention(query, key, value, scale, x_out, num_heads, head_dim);
     multi_head_attention(query, key, value, scale, x_out, num_heads, head_dim);
+
 
     proj(x_out,x_out);
 }
+
+// void Attention::forward(const Tensor& x_in, Tensor& x_out) const {
+
+//     printf("num_heads :%d, head_dim: %d\n", num_heads, head_dim);
+//     multi_head_attention(x_in, x_in, x_in, scale, x_out, num_heads, head_dim);
+// }
+
 
 void Attention::single_head_attention(
     const Tensor& query,
@@ -185,7 +334,7 @@ void Attention::multi_head_attention(
     vit_size N = query.get_N();
     Tensor qk(query.get_B(), N, N * _num_heads);
     Tensor y(query.get_B(), N, query.get_C());
-
+    printf(" N %d - head_dim %d - scale %lf \n", N, head_dim, _scale);
     vit_float val;
     vit_float cumulative;
     for (int batch=0;batch<y.get_B();++batch) {
@@ -200,9 +349,11 @@ void Attention::multi_head_attention(
                             query.at(batch, q_n, (nh*_head_dim) + c) *
                             key.at(batch, k_n, (nh*_head_dim) + c);
                     }
+                    // printf("- %f -", val);
                     val *= _scale;
                     qk.set(batch, q_n, (nh*N) + k_n, val);
                 }
+                // printf("\n");
             }
 
             // softmax of qk
@@ -226,12 +377,15 @@ void Attention::multi_head_attention(
                 for (int v_c=0;v_c<_head_dim;++v_c) {
                     val = 0;
                     for (int qk_c=0;qk_c<N;++qk_c) { // qk_c is also v_n
+                        // printf("- %lf * %lf -", qk.at(batch, qk_n, (nh*N) + qk_c), value.at(batch, qk_c, (nh*_head_dim) + v_c));
                         val +=
                             qk.at(batch, qk_n, (nh*N) + qk_c) *
                             value.at(batch, qk_c, (nh*_head_dim) + v_c);
                     }
+                    // printf("val = %lf \n", val);
                     y.set(batch, qk_n, (nh*_head_dim) + v_c, val);
                 }
+                // printf("\n");
             }
         }
     }

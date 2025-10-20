@@ -34,6 +34,14 @@ public:
     vit_size get_out_features() const;
     vit_bool get_use_norm() const;
 
+    linear_data get_fc1();
+    linear_shape get_fc1_shape();
+    vit_float (*get_act() const)(vit_float);
+    layer_data get_norm(); // subject to use_norm
+    layer_shape get_norm_shape();
+    linear_data get_fc2();
+    linear_shape get_fc2_shape();
+
     void move_fc1(Linear& _fc1);
     void set_act(const Activation _act);
     void move_norm(LayerNorm& _norm);

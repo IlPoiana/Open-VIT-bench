@@ -28,6 +28,10 @@ public:
     vit_size get_in_features() const;
     vit_size get_out_features() const;
     vit_bool get_use_bias() const;
+    vit_float * get_A();
+    void get_A_shape(int a_shape[2]);
+    vit_float * get_b();
+    vit_size get_b_dim();
 
     void move_A(Matrix& _A);
     void move_b(RowVector& _b);
@@ -57,6 +61,10 @@ public:
     void operator()(Tensor& x) const;
     void operator()(Tensor& x, vit_size num_heads, vit_size head_dim) const;
 
+    vit_float * get_g();
+    vit_float * get_bias();
+    vit_size get_g_dim();
+    vit_size get_bias_dim();
     vit_size get_normalized_shape() const;
     vit_float get_eps() const;
     vit_bool get_use_bias() const;
@@ -105,7 +113,9 @@ public:
     void operator()(Tensor& x) const;
 
     void set_act(vit_float (*_act)(vit_float val));
-
+    vit_float (*get_act() const)(vit_float) {
+        return act;
+    }
     void to_ofstream(std::ofstream& os) const;
     void from_ifstream(std::ifstream& is);
 };

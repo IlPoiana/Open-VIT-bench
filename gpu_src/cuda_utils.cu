@@ -37,6 +37,20 @@ benchmark_time::benchmark_time(){
     kernel = 0.0;
     preprocess = {};
 }
+
+float result_check_fp16(half * x, half * reference, size_t n){
+    float sum = 0.0;
+    for (size_t i = 0; i < n; ++i) sum += fabs(__half2float( reference[i]) - __half2float(x[i]));
+    return sum / (float)n; 
+}
+
+float result_check_fp16(half * x, float * reference, size_t n){
+    float sum = 0.0;
+    for (size_t i = 0; i < n; ++i) sum += fabs(reference[i] - __half2float(x[i]));
+    return sum / (float)n; 
+}
+
+
 void print_time(benchmark_time time)
 {
     for(u_int i = 0; i < time.preprocess.size(); i++){

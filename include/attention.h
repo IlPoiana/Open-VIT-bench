@@ -35,6 +35,20 @@ public:
     vit_float get_scale() const;
     vit_bool get_use_qk_norm() const;
 
+    linear_data get_q_gen();
+    linear_shape get_q_gen_shape();
+    linear_data get_k_gen();
+    linear_shape get_k_gen_shape();
+    linear_data get_v_gen();
+    linear_shape get_v_gen_shape();
+    layer_data get_q_norm();
+    layer_shape get_q_norm_shape();
+    layer_data get_k_norm();
+    layer_shape get_k_norm_shape();
+    linear_data get_proj();
+    linear_shape get_proj_shape();
+
+
     void move_qkv_gen(Linear& _q_gen, Linear& _k_gen, Linear& _v_gen);
     void move_norms(LayerNorm& _q_norm, LayerNorm& _k_norm);
     void move_proj(Linear& _proj);

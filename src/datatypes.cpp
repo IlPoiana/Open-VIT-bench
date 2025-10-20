@@ -6,6 +6,96 @@
 #include <fstream>
 #include <math.h>
 
+layer_data::layer_data(vit_float * i_g,vit_float * i_bias,vit_float i_eps,vit_bool i_use_bias){
+    g = i_g;
+    bias = i_bias;
+    eps = i_eps;
+    use_bias = i_use_bias;
+}
+
+layer_shape::layer_shape(vit_size i_g, vit_size i_b): g_size(i_g), bias_size(i_b){}
+
+scale_data::scale_data(vit_size i_dim, vit_float i_val): dim(i_dim), val(i_val){}
+
+linear_data::linear_data(vit_float *i_a, vit_float * i_b, vit_size in_f, vit_size out_f, vit_bool i_use_bias): in_features(in_f), out_features(out_f), use_bias(i_use_bias){
+    A = i_a;
+    b = i_b;
+}
+
+linear_shape::linear_shape(vit_size a_r, vit_size a_c, vit_size b_s): a_row(a_r), a_col(a_c), b_size(b_s){}
+
+attn_data::attn_data(linear_data q_g, linear_data k_g, linear_data v_g, layer_data q_n, layer_data k_n, linear_data i_proj, vit_size i_dim, vit_size num_h, vit_size head_d, vit_float scal, vit_bool use_qk_n):
+    dim(i_dim),
+    num_heads(num_h),
+    head_dim(head_d),
+    scale(scal),
+    use_qk_norm( use_qk_n),
+    q_gen(q_g.A,  q_g.b,  q_g.in_features,  q_g.out_features,  q_g.use_bias),
+    k_gen(k_g.A,  k_g.b,  k_g.in_features,  k_g.out_features,  k_g.use_bias),
+    v_gen(v_g.A,  v_g.b,  v_g.in_features,  v_g.out_features,  v_g.use_bias),
+    proj(proj.A,  proj.b,  proj.in_features,  proj.out_features,  proj.use_bias),
+    q_norm(q_norm.g = q_n.g,q_norm.bias = q_n.bias,q_norm.eps = q_n.eps,q_norm.use_bias = q_n.use_bias),
+    k_norm(k_norm.g = k_n.g,k_norm.bias = k_n.bias,k_norm.eps = k_n.eps,k_norm.use_bias = k_n.use_bias)
+{}
+
+attn_shape::attn_shape(linear_shape q_gen_s, linear_shape k_gen_s, linear_shape v_gen_s, layer_shape q_norm_s, layer_shape k_norm_s, linear_shape proj_s):
+    q_gen_shape(q_gen_s.a_col,q_gen_s.a_row,q_gen_s.b_size),
+    k_gen_shape(k_gen_s.a_col,k_gen_s.a_row,k_gen_s.b_size),
+    v_gen_shape(v_gen_s.a_col,v_gen_s.a_row,v_gen_s.b_size),
+    proj_shape(proj_s.a_col,proj_s.a_row, proj_s.b_size),
+    q_norm_shape(q_norm_s.g_size, q_norm_s.bias_size),
+    k_norm_shape(k_norm_s.g_size, k_norm_s.bias_size)
+{}
+
+//TO CHECK the activation
+mlp_data::mlp_data(vit_size in_f, vit_size hidden_f, vit_size out_f, vit_bool use_n, linear_data i_fc1, layer_data i_norm, vit_float (* act)(vit_float i_val), linear_data i_fc2):
+    in_features(in_f),
+    hidden_features(hidden_f),
+    out_features(out_f),
+    use_norm(use_n),
+    fc1(i_fc1.A, i_fc1.b, i_fc1.in_features, i_fc1.out_features, i_fc1.use_bias),
+    fc2(i_fc2.A, i_fc2.b, i_fc2.in_features, i_fc2.out_features, i_fc2.use_bias),
+    norm(i_norm.g, i_norm.bias, i_norm.eps, i_norm.use_bias)
+{
+    activaction = act;
+}
+
+mlp_shape::mlp_shape(linear_shape fc1_s, layer_shape norm_s, linear_shape fc2_s):
+    fc1_shape(fc1_s.a_row, fc1_s.a_col, fc1_s.b_size),
+    fc2_shape(fc2_s.a_row, fc2_s.a_col, fc2_s.b_size),
+    norm_shape(norm_s.g_size, norm_s.bias_size)
+{}
+
+// blocks_data::blocks_data()
+// {
+//     dim = 0;
+//     num_heads = 0;
+//     mlp_ratio = 0.0f;
+// }
+
+
+blocks_data::blocks_data(vit_size i_dim, vit_size num_h, vit_float mlp_r, layer_data i_norm1, attn_data attn, scale_data i_ls1, layer_data i_norm2, mlp_data i_mlp, scale_data i_ls2) :
+    dim(i_dim),
+    num_heads(num_h),
+    mlp_ratio(mlp_r),
+    norm1(i_norm1.g,i_norm1.bias, i_norm1.eps, i_norm1.use_bias),
+    norm2(i_norm2.g,i_norm2.bias, i_norm2.eps, i_norm2.use_bias),
+    ls1(i_ls1.dim, i_ls1.val),
+    ls2(i_ls2.dim, i_ls2.val),
+    attention( attn.q_gen,  attn.k_gen,  attn.v_gen,  attn.q_norm, attn.k_norm,  attn.proj,  attn.dim,  attn.num_heads,  attn.head_dim, attn.scale, attn.use_qk_norm),
+    mlp(i_mlp.in_features,i_mlp.hidden_features, i_mlp.out_features, i_mlp.use_norm,
+    i_mlp.fc1,i_mlp.norm,i_mlp.activaction,i_mlp.fc2)
+{}
+
+// blocks_shape::blocks_shape()
+// {
+// }
+
+blocks_shape::blocks_shape(layer_shape norm1_s, attn_shape attention_s, mlp_shape mlp_s, layer_shape norm2_s) : norm1_shape(norm1_s.g_size, norm1_s.bias_size),
+                                                                                                                norm2_shape(norm2_s.g_size, norm2_s.bias_size),
+                                                                                                                attention_shape(attention_s.q_gen_shape, attention_s.k_gen_shape, attention_s.v_gen_shape, attention_s.q_norm_shape, attention_s.k_norm_shape, attention_s.proj_shape),
+                                                                                                                mlperc_shape(mlp_s.fc1_shape, mlp_s.norm_shape, mlp_s.fc2_shape)
+{}
 
 
 // RowVector class
@@ -230,6 +320,11 @@ vit_size Matrix::get_COLS() const {
     return COLS;
 }
 
+vit_float *Matrix::get_data()
+{
+    return data;
+}
+
 vit_float Matrix::at(vit_size i, vit_size j) const {
     assert(i<ROWS);
     assert(j<COLS);
@@ -386,6 +481,10 @@ Tensor& Tensor::operator+= (const Tensor& t) {
     return *this;
 }
 
+vit_float * Tensor::get_data(){
+    return data;
+}
+
 vit_size Tensor::get_B() const {
     return B;
 }
@@ -436,7 +535,7 @@ void Tensor::print() const {
         for (int n=0;n<N;++n) {
             std::cout << "   ";
             for (int c=0;c<C;++c) {
-                //std::cout << this->at(b,n,c) << " ";
+                // std::cout << this->at(b,n,c) << " ";
                 printf("%7.3f ", this->at(b,n,c));
             }
             std::cout << std::endl;
@@ -867,3 +966,4 @@ void PredictionBatch::from_ifstream(std::ifstream& is) {
     }
     is.read( (char*) prob_matrix, sizeof(vit_float)*B*CLS );
 }
+

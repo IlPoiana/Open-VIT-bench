@@ -21,6 +21,10 @@
 
 *.nsys-rep
 cuBLAS.cu
+run_cuBLAS.sh
+build_cuBLAS.sh
 /timm_train_vit/*
 json/*
 *.png
+SbatchMan/*
+cuDNN_explained.cu

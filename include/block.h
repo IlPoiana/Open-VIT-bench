@@ -36,6 +36,17 @@ public:
     vit_size get_num_heads() const;
     vit_float get_mlp_ratio() const;
 
+    layer_data get_norm1();
+    layer_shape get_norm1_shape();
+    attn_data get_attention();
+    attn_shape get_attention_shape();
+    scale_data get_ls1();
+    layer_data get_norm2();
+    layer_shape get_norm2_shape();    
+    mlp_data get_mlp();
+    mlp_shape get_mlp_shape();
+    scale_data get_ls2();
+
     void move_norm1(LayerNorm& _norm1);
     void move_attn(Attention& _attn);
     void set_ls1_val(vit_float val);

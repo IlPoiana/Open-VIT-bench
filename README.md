@@ -81,6 +81,9 @@ Each test files simply instantiate a component, sets its parameters, creates an 
 
 ## How to run the benchmark
 
+> [!Tip]
+> We suggest to create your own *venv* to be able to perform all the python scripts (put reference to venv creation section)
+
 The benchmark is intended to compare the performance of the different ViT implementation, as well as show that the models produce the same output. The first step is the compilation of C++ and OMP in the *bin/* and *omp_bin/* respectively. You can do it running `bash compile.sh`.
 
 Then, run `bash create_dataset.sh` to create a random dataset in the *data/* folder. You can adjust the dataset creation parameters in the appropriate section of *params.sh* file. Continue running `bash create_models.sh`: it will generate the ViT models and store them in the *models/* folder.
@@ -108,6 +111,14 @@ When you want to clean the work space, you have two possible commands:
 # GPU acceleration
 This section is for explain briefly how are made and how to use the Accelerated components
 
+## Requirements (reference here)
+
+Create a venv with....
+
+- CUDA and CUBLAS
+- SbatchMan(create a venv or install the requirements with conda)
+- python (graph and data visualization)
+
 ## Repo Structure
 - *gpu_include:* this folder contains all the header files following the same logic as the cpp section.
 - *gpu_src:* this folder contains all the source files with the C++/CUDA implementations following the same logic as the cpp section.
@@ -131,3 +142,26 @@ where `level` is a value between 0-2 that indicates which kernel I want to launc
 ## Layer Scale
 
 ## MLP
+
+## Benchmarks
+
+### Datasets creations
+To create the datasets `bash create_benchmark_datasets.sh`
+### Test launch
+*Local*:
+To launch the test and generate the json `bash sect_bench.sh`
+
+*Cluster*:
+```bash
+bash sbatchman_block_test.sh <block_name>
+```
+What runs will be done for each block:
+
+- **conv2d**: Image size for all three levels, batch size for 1 and 2, streams number variation for level 2 kernel.
+
+This will compute all the benchmarks that produced the results displayed for each block. (image size and batch size comparison)
+
+### Visualization
+- `python3 scripts/compute_block_metrics.py json/blocks/conv2d`
+- For the image size graphs `python3 scripts/plot_image_size.py ./json/blocks/conv2d/ <batch size> --out <image_name>.png`
+- For the batch size graphs `python3 scripts/plot_batch_size.py ./json/blocks/conv2d/ 2 --size <size> --out myplot.png`
