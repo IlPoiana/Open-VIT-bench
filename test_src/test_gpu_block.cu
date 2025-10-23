@@ -204,6 +204,7 @@ void cpu_gpu_comparison(){
     u_int qkv_dimensions = C * C;
     u_int proj_dimensions = C * C;
     double epsilon = 0.00001;
+    
     //INput data
     vit_float x_data[input_elements_number] = {
         -0.703,  -0.155,   0.869,  -0.876,  -0.116,   0.148,  -0.865,  -0.431,  -0.442,
@@ -416,6 +417,7 @@ void cpu_gpu_comparison(){
     unrolled_multi_elem_cub_ln();
     //-Residual
     //...
+
     return;
 }
 

@@ -311,7 +311,7 @@ $(TEST_OBJ_FOLDER)/test_gpu_block.o :
 	nvcc -t 4 -c $(CUDA_FLAGS) $(TEST_SRC_FOLDER)/test_gpu_block.cu -o $(TEST_OBJ_FOLDER)/test_gpu_block.o
 
 $(TEST_BIN_FOLDER)/test_gpu_block.exe \
-: $(TEST_BIN_FOLDER)/%.exe :
+: $(TEST_BIN_FOLDER)/%.exe : \
 $(OBJ_FOLDER)/datatypes.o \
 $(OBJ_FOLDER)/modules.o \
 $(OBJ_FOLDER)/mlp.o \
@@ -328,5 +328,5 @@ $(OBJ_FOLDER)/gpu_vit.o \
 $(OBJ_FOLDER)/gpu_mlp.o \
 $(OBJ_FOLDER)/cudnn_attention.o \
 $(TEST_OBJ_FOLDER)/%.o
-nvcc -t 4 $(CUDA_FLAGS) $^ -o $@
+	nvcc -t 4 $(CUDA_FLAGS) $^ -o $@
 # 	nvcc -t 4 $(CUDA_FLAGS) $(CUDNN_FLAGS) $^ -o $@
