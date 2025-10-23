@@ -1,7 +1,6 @@
 #include "./cudnn_attention.h"
 #include "./gpu_mlp.h"
 #include "./gpu_layer.h"
-#include "../gpu_src/gpu_block.cu"
 
 #define RESIDUAL_BLOCK_DIM 256
 #define RESIDUAL_ELEM_PER_THREAD 4
