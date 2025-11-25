@@ -22,11 +22,15 @@ conv_kernel_shape::conv_kernel_shape(int * array_shape){
     w_stride=array_shape[5];
 }
 
-__global__ void addScalarKernel(float* array, float val, int N) {
-    int idx = threadIdx.x + blockIdx.x * blockDim.x;
-    if (idx < N) {
-        array[idx] += val;
+
+__global__ void add_strided(half * x, half * val_array, u_int N) {
+    u_int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    int stride = blockDim.x * gridDim.x;
+
+    for (int i = idx; i < N; i += stride) {
+        x[i] += val_array[i];
     }
+    return;
 }
 
 benchmark_time::benchmark_time(std::vector<float> pre, float& k): kernel(k){
@@ -50,6 +54,37 @@ float result_check_fp16(half * x, float * reference, size_t n){
     return sum / (float)n; 
 }
 
+// initialize the half device array with random (Set seed) values, every value generated (between -1.0 and 1.0) is then scaled by `scale`
+__global__ void generate_reference(half * d_x, u_int total_n, float scale, u_long seed){
+    u_int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    curandStatePhilox4_32_10_t state;
+    curand_init(seed, /*subsequence*/ idx, /*offset*/ 0, &state);
+    if(idx < total_n)
+        d_x[idx] = __float2half(((curand_uniform(&state) * 2) - 1.0f) * scale);
+}
+
+// initialize the float device array with random (Set seed) values, every value generated (between -1.0 and 1.0) is then scaled by `scale`
+__global__ void generate_reference(float * d_x, u_int total_n, float scale, u_long seed){
+    u_int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    curandStatePhilox4_32_10_t state;
+    curand_init(seed, /*subsequence*/ idx, /*offset*/ 0, &state);
+    if(idx < total_n)
+        d_x[idx] = ((curand_uniform(&state) * 2) - 1.0f) * scale;
+}
+
+void rand_init(float * h_out, u_int n, float rand_scale, u_long seed){
+    u_int blocks_n = (n / 256) + 1;
+    float * d_buffer; cudaMalloc(&d_buffer, sizeof(float) * n);
+    generate_reference<<<blocks_n, 256>>>(d_buffer, n, rand_scale, seed); 
+    CUDA_CHECK(cudaMemcpy(h_out,d_buffer,sizeof(float) * n,cudaMemcpyDeviceToHost));    // GPU Single Stream
+}
+
+void rand_init(half * h_out, u_int n, float rand_scale, u_long seed){
+    u_int blocks_n = (n / 256) + 1;
+    half * d_buffer; cudaMalloc(&d_buffer, sizeof(half) * n);
+    generate_reference<<<blocks_n, 256>>>(d_buffer, n, rand_scale, seed); 
+    CUDA_CHECK(cudaMemcpy(h_out,d_buffer,sizeof(half) * n,cudaMemcpyDeviceToHost));    // GPU Single Stream
+}
 
 void print_time(benchmark_time time)
 {

@@ -165,11 +165,12 @@ void cpu_gpu_comparison(){
     cout << "creating the matrix in half precision" << endl;
     //ATTENTION!
     vit_float q_data_t[qkv_dimensions], k_data_t[qkv_dimensions], v_data_t[qkv_dimensions], p_data_t[proj_dimensions];
+    /*Should be wrong!*/
     transpose(q_data,q_data_t,C,K); /// TRANSPOSE EVERYTHING
     transpose(k_data,k_data_t,C,K); 
     transpose(v_data,v_data_t,C,K); 
     transpose(p_data,p_data_t,K,C); 
-    
+
     mtx q_host(q_data_t, C,K);
     mtx k_host(k_data_t, C,K);
     mtx v_host(v_data_t, C,K);

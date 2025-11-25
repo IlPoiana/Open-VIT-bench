@@ -188,11 +188,12 @@ void Mlp::from_ifstream(std::ifstream& is) {
 
 void Mlp::forward(const Tensor& x_in, Tensor& x_out) const {
     assert(x_in.get_C() == in_features);
-
+    // /*TO REMOVE*/ printf("first layer\n");
     fc1(x_in, x_out);
     act(x_out);
     if (use_norm == true) {
         norm(x_out);
     }
+    // /*TO REMOVE*/ printf("second layer\n");
     fc2(x_out, x_out);
 }

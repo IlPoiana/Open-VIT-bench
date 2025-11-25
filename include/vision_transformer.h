@@ -82,18 +82,17 @@ public:
     vit_size get_num_reg_tokens() const;
     vit_size get_num_prefix_tokens() const;
     vit_bool get_no_embed_class() const;
-
-    vit_bool get_use_pos_embed() const;
-    vit_bool get_use_pre_norm() const;
-    vit_bool get_use_fc_norm() const;
-    vit_bool get_dynamic_img_size() const;
+    
     //Patch Embedder
     vit_float * get_conv2d_kernel();
     vit_float * get_conv2d_bias();
+    vit_bool get_conv2d_use_bias();
     void get_kernel_shape(int kernel_shape[6]);
     layer_data get_patch_layer_norm();
     layer_shape get_patch_layer_shape();
-    vit_bool get_layer_use_norm();
+    vit_bool get_patch_emb_use_norm();
+    vit_bool get_use_pos_embed() const;
+    vit_bool get_dynamic_img_size() const;
     
     vit_float *  get_cls_token();
     vit_size get_cls_token_shape();
@@ -103,29 +102,31 @@ public:
     vit_float * get_pos_embed();
     void get_pos_embed_shape(int pos_embed_shape[2]);
 
-
+    //Additional norm
+    vit_bool get_use_pre_norm() const;
     layer_data get_pre_norm();
     layer_shape get_pre_norm_shape();
-    layer_data get_norm(); // TO DO
+    layer_data get_norm();
     layer_shape get_norm_shape();
-    layer_data get_fc_norm();// TO DO
+    vit_bool get_use_fc_norm() const;
+    layer_data get_fc_norm();
     layer_shape get_fc_norm_shape();
 
-
-
+    //Encoder block
     std::vector<blocks_data> get_blocks();
     std::vector<blocks_shape> get_blocks_shape();
     vit_size get_blocks_number();
     
+    //Prediction head
     linear_data get_head();
     linear_shape get_head_shape();
 
     
-    void move_cls_token(RowVector _cls_token);
+    void move_cls_token(RowVector &_cls_token);
     void move_reg_token(Matrix _reg_token);
-    void move_pos_embed(Matrix _pos_embed);
+    void move_pos_embed(Matrix &_pos_embed);
 
-    void move_patch_embed(PatchEmbed _patch_embed);
+    void move_patch_embed(PatchEmbed &_patch_embed);
     void move_pre_norm(LayerNorm _pre_norm);
     void move_blocks(std::vector<Block> _blocks);
     void move_norm(LayerNorm _norm);

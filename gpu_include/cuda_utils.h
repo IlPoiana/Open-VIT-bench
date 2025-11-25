@@ -5,26 +5,20 @@
 #include <cuda_fp16.h> 
 #include <iostream>
 #include "./helpers.h"
+//For generate reference
+#include <bits/stdc++.h>
+#include <curand_kernel.h>
 
-// CUDA API error checking
-
-// #define CUDA_CHECK(err)                                                                            \
-// do {                                                                                           \
-//     cudaError_t err_ = (err);                                                                  \
-//     if (err_ != cudaSuccess) {                                                                 \
-//         std::printf("CUDA error %d at %s:%d\n", err_, __FILE__, __LINE__);                     \
-//         throw std::runtime_error("CUDA error");                                                \
-//     }                                                                                          \
-// } while (0)
-
-#define CUBLAS_CHECK(err)                                                                          \
-do {                                                                                           \
-    cublasStatus_t err_ = (err);                                                               \
-    if (err_ != CUBLAS_STATUS_SUCCESS) {                                                       \
-        std::printf("cublas error %d at %s:%d\n", err_, __FILE__, __LINE__);                   \
-        throw std::runtime_error("cublas error");                                              \
-        }                                                                                          \
-    } while (0)
+#define CUBLAS_CHECK(err)                                                         \
+do {                                                                              \
+    cublasStatus_t err_ = (err);                                                 \
+    if (err_ != CUBLAS_STATUS_SUCCESS) {                                          \
+        char buf[256];                                                            \
+        std::snprintf(buf, sizeof(buf),                                          \
+            "cublas error %d at %s:%d", (int)err_, __FILE__, __LINE__);          \
+        throw std::runtime_error(buf);                                            \
+    }                                                                             \
+} while (0)
 
 #define CHECK_LAUNCH() do {                                             \
   CUDA_CHECK(cudaPeekAtLastError()); /* catch launch param errors */    \
@@ -103,13 +97,25 @@ inline void f32_to_f16(const float* in, __half* out, size_t n)
     }
 }
 
+// Converts n floats at `in` into n halves at `out` (round-to-nearest-even)
+inline void f16_to_f32(const half* in, float* out, size_t n)
+{
+    for (size_t i = 0; i < n; ++i) {
+        out[i] = __half2float(in[i]);   // host-available intrinsic
+    }
+}
+
 float result_check_fp16(half * x, half * reference, size_t n);
 float result_check_fp16(half * x, float * reference, size_t n);
 
+__global__ void generate_reference(float * d_x, u_int total_n, float scale = 1.0f, u_long seed = 0);
+__global__ void generate_reference(half * d_x, u_int total_n, float scale = 1.0f, u_long seed = 0);
+void rand_init(float * h_out, u_int n, float rand_scale, u_long seed);
 
 void print_time(benchmark_time time);
 void print_json_time(benchmark_time time, const vector<string>& preprocess_names);
+inline string yesno(bool b){ return b ? "true" : "false"; };
 
-__global__ void addScalarKernel(float* array, float val, int N);
+__global__ void add_strided(half * x, half * val_array, u_int N);
 
 void linearize(float * data, float * linearized_data, picture_shape input_img, conv_kernel_shape kernel);

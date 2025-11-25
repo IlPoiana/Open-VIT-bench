@@ -1,5 +1,3 @@
-#define TEST_BLOCK
-#include "../include/block.h"
 #include "../gpu_include/gpu_block.h"
 
 
@@ -9,13 +7,46 @@
 #define K 10
 #define M 9
 
-#define LAYER_SCALE 0.00004
-/*
-1) Test the cpu implementation
-2) Finish the GPU porting:
-    2.1) Create an appropriate Attention function
+double compare_results(Tensor &y, half * gpu_y){
+    double avg = 0;
+    for(u_int b = 0; b < y.get_B(); b++){
+        for(u_int t = 0; t < y.get_N(); t++){
+            for(u_int c = 0; c < y.get_C(); c++){
+                assert(!isnanf( y.at(b,t,c)));
+                assert(!isnanf( __half2float(gpu_y[c + y.get_C() * t + y.get_C() * y.get_N() * b])));
+                avg += (double)abs(y.at(b,t,c) - __half2float(gpu_y[c + y.get_C() * t + y.get_C() * y.get_N() * b]));
+                
+            }
+        }
+    }
+    return avg / (double(y.get_B()) * y.get_N() * y.get_C());
+}
 
-*/
+double compare_results(Tensor &y, float * gpu_y){
+    double avg = 0;
+    for(u_int b = 0; b < y.get_B(); b++){
+        for(u_int t = 0; t < y.get_N(); t++){
+            for(u_int c = 0; c < y.get_C(); c++){
+                assert(!isnanf( y.at(b,t,c)));
+                assert(!isnanf( gpu_y[c + y.get_C() * t + y.get_C() * y.get_N() * b]));
+                avg += (double)abs(y.at(b,t,c) - gpu_y[c + y.get_C() * t + y.get_C() * y.get_N() * b]);
+                
+            }
+        }
+    }
+    return avg / (double(y.get_B()) * y.get_N() * y.get_C());
+}
+
+// from A: MxN (row-major) to B: NxM (row-major)
+template <class cls>
+void transpose_out_of_place(const cls* in, cls* out, std::size_t rows, std::size_t cols) {
+    for (std::size_t i = 0; i < rows; ++i) {
+        const cls* Ai = in + i * cols;
+        for (std::size_t j = 0; j < cols; ++j) {
+            out[j * rows + i] = Ai[j];
+        }
+    }
+}
 
 Tensor cpu_baseline(
     vit_float * x_data,
@@ -36,10 +67,10 @@ Tensor cpu_baseline(
     vit_float * pb_data = attention_data.proj.b;
     cout << "Test Attention" << endl;
     u_int input_elements_number = B*T*C;
-    u_int hidden_elements_number = B * T * K;
-    u_int output_elements_number = B * T * M;
-    u_int qkv_dimensions = C * C;
-    u_int proj_dimensions = C * C;
+    // u_int hidden_elements_number = B * T * K;
+    // u_int output_elements_number = B * T * M;
+    // u_int qkv_dimensions = C * C;
+    // u_int proj_dimensions = C * C;
 
     // Linear weights
     
@@ -103,15 +134,6 @@ Tensor cpu_baseline(
 
     attn.move_qkv_gen(q_gen, k_gen, v_gen);
     attn.move_proj(proj);
-
-    //TO REMOVE
-    // Tensor y;
-    // attn.forward(x, y);
-    // cout << "### y = attn(x)" << endl;
-    // y.print();
-
-    // cout << "avg. difference CPU/cuDNN GPU: "  << compare_results(y, host_out) << endl;
-    //----
 
     // Mlp Initialization
     mlp_data mlp_cpu_data = block_data.mlp;
@@ -192,20 +214,15 @@ Tensor cpu_baseline(
 
     Tensor y;
     blk.forward(x, y);
-    cout << "### y = encoder_block(x)" << endl;
-    y.print();
     return y;
 }
 
-void cpu_gpu_comparison(){
-    u_int input_elements_number = B*T*C;
-    u_int hidden_elements_number = B * T * K;
-    u_int output_elements_number = B * T * M;
-    u_int qkv_dimensions = C * C;
-    u_int proj_dimensions = C * C;
-    double epsilon = 0.00001;
-    
-    //INput data
+//True for transposed but fused(MLP epilogue), false for not transposed and not fused
+void cpu_gpu_comparison(bool kernel_type){
+    u_int const input_elements_number = B*T*C;
+    double epsilon = 0.00001; 
+    // -- DATA INIT -- 
+    //Input data
     vit_float x_data[input_elements_number] = {
         -0.703,  -0.155,   0.869,  -0.876,  -0.116,   0.148,  -0.865,  -0.431,  -0.442,
          0.335,   0.172,   0.187,  -0.907,   0.904,  -0.837,  -0.622,   0.454,  -0.883,
@@ -267,8 +284,8 @@ void cpu_gpu_comparison(){
         -0.042026, -0.002532, -0.931864, 0.623818, -0.897300, -0.734560, 0.848118, -0.922245, 0.586201,
         -0.560232, -0.474477, 0.867411, 0.273795, -0.139959, -0.447935, 0.231609, 0.875990, -0.501251,
         -0.715188, 0.723610, -0.255640, 0.837134, 0.360450, 0.852773, -0.908113, 0.942807, 0.550265
-    };
-    
+    };    
+
     vit_float qb_data[C] = {-0.067304, 0.196617, -0.791649, 0.552098, 0.686811, 0.359159, 0.395233, 0.665119, 0.273050};     
     vit_float kb_data[C] = {-0.067304, 0.196617, -0.791649, 0.552098, 0.686811, 0.359159, 0.395233, 0.665119, 0.273050};
     vit_float vb_data[C] = {-0.213135, 0.884225, -0.646646, -0.524352, 0.570676, -0.602515, -0.492012, -0.658386, -0.906315};
@@ -286,7 +303,6 @@ void cpu_gpu_comparison(){
             -0.285737, -0.105809, 0.647727, -0.029205, 0.209804, 0.876799, -0.285737, -0.105809, 0.647727,
             -0.006798, -0.411250, -0.551676, 0.055781, -0.335824, -0.228423, -0.006798, -0.411250, -0.551676
     };
-
     vit_float A2_data[M*K] = {
          -2.005, -14.575,  17.934, -29.395,  -5.142,  28.463,  32.815, -74.448,  76.309,   0.199,
         -32.319, -50.704,  79.610, -53.554, -59.941,  -4.564,   7.415,  50.209, -28.249,  67.815,
@@ -306,6 +322,7 @@ void cpu_gpu_comparison(){
     vit_float n2g_data[C] = {0.439476, -0.321163, -0.100588, -0.699733, 0.149049, -0.465826, -0.940250, 0.509871, -0.375616};
     vit_float n2b_data[C] = {0.439476, -0.321163, -0.100588, -0.699733, 0.149049, -0.465826, -0.940250, 0.509871, -0.375616};
     
+    // -- CPU part --
 
     layer_data ln1(n1g_data,n1b_data,epsilon, true);
 
@@ -338,91 +355,376 @@ void cpu_gpu_comparison(){
     );
     
     
-    cpu_baseline(x_data, block_data);
-    return;
+    Tensor y = cpu_baseline(x_data, block_data);
+    y.print();
 
-    //GPU Part
-    h_tensor x_gpu(x_data,B,C,1,T);
+    // -- GPU Part -- 
+    /*
+    Schema
+    x_data
+    ==>
+    d_x -> ln1 -> d_y -> attn -> d_t -> + -> d_x
+    ==>
+    d_x -> ln2 -> d_y -> mlp -> d_t-> Trans -> d_y -> + -> d_x 
+    ==> 
+    y_gpu
+    */
 
-    
-    half * y_gpu = (half *)malloc(sizeof(half) * B * T * M); // TO MALLOC!!
-
-    //-Device allocation
-    void * d_x,
-    * d_b1_data, * d_b1_mtx,* d_b2_data, * d_b2_mtx,
-    * d_fc1, * d_fc2, * d_h,
-    * d_y;
-    CUDA_CHECK(cudaMalloc(&d_x, sizeof(half) * B * T * C));CUDA_CHECK(cudaMemcpy(d_x, x_gpu.data, sizeof(half) * B * T *C, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMalloc(&d_y, sizeof(half) * B * T * M)); // for now, then will have different shape
-    
     //-Handle creation
     cublasLtHandle_t handle;CUBLAS_CHECK(cublasLtCreate(&handle));
     cudaStream_t stream1;
     cudaStreamCreate(&stream1);
 
-    //-MLP
+    //-GPU variables initialization
+    u_int ln_blocks_n = (T * B) / TOKENS_PER_BLOCK;
+    half gpu_epsilon = __double2half(epsilon);
+
+    //--Input, output and temp buffer allocation and initialization
+    h_tensor x_gpu(x_data,B,C,1,T);
+    half * y_gpu = (half *)malloc(sizeof(half) * B * T * M); 
+    void * d_x, * d_t/*necessary for the Transpose op.*/, * d_y;
+    CUDA_CHECK(cudaMalloc(&d_x, sizeof(half) * B * T * C));CUDA_CHECK(cudaMemcpy(d_x, x_gpu.data, sizeof(half) * B * T *C, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMalloc(&d_t, sizeof(half) * B * T * C));
+    CUDA_CHECK(cudaMalloc(&d_y, sizeof(half) * B * T * M));
+
+    //--Layer norm 1
+    mtx gpu_n1_bias(n1b_data, 1, C); mtx gpu_n1_scale(n1g_data, 1, C);
+    half * d_n1_bias, * d_n1_scale;
+    CUDA_CHECK(cudaMalloc(&d_n1_bias, sizeof(half) * C)); CUDA_CHECK(cudaMemcpy(d_n1_bias, gpu_n1_bias.data, sizeof(half) * C, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMalloc(&d_n1_scale, sizeof(half) * C)); CUDA_CHECK(cudaMemcpy(d_n1_scale, gpu_n1_scale.data, sizeof(half) * C, cudaMemcpyHostToDevice));
+    assert(M == C);
+
+    //--Attention
+    cudnnHandle_t cudnn_handle; CUDNN_CHECK(cudnnCreate(&cudnn_handle)); CUDNN_CHECK(cudnnSetStream(cudnn_handle, stream1));
+    mtx h_q(q_data,C,C), h_k(k_data,C,C), h_v(v_data,C,C), h_p(p_data,C,C);    
+    mtx h_qb(qb_data,1,C), h_kb(kb_data,1,C), h_vb(vb_data,1,C), h_pb(pb_data,1,C);    
+    half * q_data_t = (half*)malloc(sizeof(half) * C * C);
+    half * k_data_t = (half*)malloc(sizeof(half) * C * C);
+    half * v_data_t = (half*)malloc(sizeof(half) * C * C);
+    half * p_data_t = (half*)malloc(sizeof(half) * C * C);
+    
+    transpose_out_of_place<half>(h_q.data,q_data_t,C,C);
+    transpose_out_of_place<half>(h_k.data,k_data_t,C,C);
+    transpose_out_of_place<half>(h_v.data,v_data_t,C,C);
+    transpose_out_of_place<half>(h_p.data,p_data_t,C,C);
+    
+    attn_data_gpu h_attn_weights(
+        q_data_t, k_data_t, v_data_t, p_data_t, 
+        h_qb.data, h_kb.data, h_vb.data, h_pb.data
+    );
+
+    attn_dimensions_gpu attn_dim(B,T,C,C);
+    attn_cuDNN_descriptors fused_desc; 
+    std::vector<int> hiWin(T);fused_desc.hiWin = hiWin;
+    initialize_attn_descriptors(cudnn_handle, h_attn_weights, attn_dim,fused_desc);
+    
+    //--Layer norm 2
+    mtx gpu_n2_bias(n2b_data, 1, C); mtx gpu_n2_scale(n2g_data, 1, C);
+    half * d_n2_bias, * d_n2_scale;
+    CUDA_CHECK(cudaMalloc(&d_n2_bias, sizeof(half) * C)); CUDA_CHECK(cudaMemcpy(d_n2_bias, gpu_n2_bias.data, sizeof(half) * C, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMalloc(&d_n2_scale, sizeof(half) * C)); CUDA_CHECK(cudaMemcpy(d_n2_scale, gpu_n2_scale.data, sizeof(half) * C, cudaMemcpyHostToDevice));
+
+    //--MLP
+    void * d_b1_data, * d_b1_mtx,* d_b2_data, * d_b2_mtx,
+    * d_fc1, * d_fc2, * d_h; 
+
     mtx b1_gpu(b1_data,1,K); mtx b1_gpu_mtx(K, B*T); bias_matrix(b1_gpu.data, b1_gpu_mtx.data, K, B*T);
     mtx b2_gpu(b2_data,1,M); mtx b2_gpu_mtx(M, B*T); bias_matrix(b2_gpu.data, b2_gpu_mtx.data, M, B*T);
     mtx fc1_gpu(A1_data,K,C);
     mtx fc2_gpu(A2_data,M,K);
     half * h_gpu = (half *)malloc(sizeof(half) * B * T * K);
-    //First layer
+    //---First layer
     CUDA_CHECK(cudaMalloc(&d_fc1, sizeof(half) * K * C));CUDA_CHECK(cudaMemcpy(d_fc1, fc1_gpu.data, sizeof(half) * K *C, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMalloc(&d_b1_data, sizeof(half) * K));CUDA_CHECK(cudaMemcpy(d_b1_data, b1_gpu.data, sizeof(half) * K, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMalloc(&d_b1_mtx, sizeof(half) * B * T * K));CUDA_CHECK(cudaMemcpy(d_b1_mtx, b1_gpu_mtx.data, sizeof(half) * B * T * K, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMalloc(&d_h, sizeof(half) * B * T * K)); // for now, then will have different shape
-    //Second layer
+    //---Second layer
     CUDA_CHECK(cudaMalloc(&d_fc2, sizeof(half) * M * K));CUDA_CHECK(cudaMemcpy(d_fc2, fc2_gpu.data, sizeof(half) * M * K, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMalloc(&d_b2_data, sizeof(half) * M));CUDA_CHECK(cudaMemcpy(d_b2_data, b2_gpu.data, sizeof(half) * M, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMalloc(&d_b2_mtx, sizeof(half) * B * T * M));CUDA_CHECK(cudaMemcpy(d_b2_mtx, b2_gpu_mtx.data, sizeof(half) * B * T * M, cudaMemcpyHostToDevice));
-    //cuBLASLt
+    //---cuBLASLt
     cublasLt_matmul_desc matmul[2];
     cublasLtMatmulAlgo_t algo[2];
     void * d_workspace; cudaMalloc(&d_workspace, (size_t) MLP_WORKSPACE_SIZE);
     mlp_dimensions dim(B,T,C,K,M);
-    create_mlp_descriptors(handle, matmul, d_workspace, algo, dim);
-
-    fused_gpu_mlp(
-        handle,stream1,
-        matmul, algo, d_workspace,
-        d_x, d_fc1, d_h,d_b1_mtx, d_fc2,d_b2_mtx,d_y
-    );
-    //Transpose
-    cublasLtMatrixTransformDesc_t transposeDesc; CUBLAS_CHECK(cublasLtMatrixTransformDescCreate(&transposeDesc, MLP_COMPUTE_DATA_TYPE));
-    cublasLtMatrixLayout_t mlp_out_desc; CUBLAS_CHECK(cublasLt);
-    cublasLtMatrixLayout_t ln_in_desc;
-
-    CHECK_CUBLAS(cublasLtMatrixLayoutCreate(&mlp_out_, CUDA_R_32F, N, M, N)); // A as transposed
-    CHECK_CUBLAS(cublasLtMatrixLayoutCreate(&layoutC, CUDA_R_32F, M, N, M));
+    create_mlp_descriptors(handle, matmul, d_workspace, algo, dim, kernel_type);
     
+    //--Transpose
+    cublasLtMatrixTransformDesc_t transposeDesc; 
+    cublasLtMatrixLayout_t mlp_out_desc;
+    cublasLtMatrixLayout_t res_in_desc;
+    cublasOperation_t op = CUBLAS_OP_T;  // transpose A
     float alpha = 1.0f, beta = 0.0f;
-    cublasLtMatrixTransform(
-        handle, transposeDesc,
-        &alpha, d_y, mlp_out_desc,
-        &beta, nullptr, nullptr,
-        d_x, ln_in_desc, stream1
+    if(kernel_type){
+        CUBLAS_CHECK(cublasLtMatrixTransformDescCreate(&transposeDesc, CUDA_R_32F));
+        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&mlp_out_desc, CUDA_R_16F, /*rows*/B*T, /*cols*/C, /*ld*/B*T));
+        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&res_in_desc, CUDA_R_16F, /*rows*/C, /*cols*/B*T, /*ld*/C));
+        CUBLAS_CHECK(cublasLtMatrixTransformDescSetAttribute(
+            transposeDesc, CUBLASLT_MATRIX_TRANSFORM_DESC_TRANSA, &op, sizeof(op)
+        ));
+    }
+    //-GPU Execution
+
+    //-Layer Norm    
+    cub_single_layer_norm<<<ln_blocks_n,C,0,stream1>>>((half *)d_x, (half *)d_y,d_n1_scale, d_n1_bias, gpu_epsilon, 1);
+    
+    cudaMemcpy(y_gpu, d_y, sizeof(half) * input_elements_number, cudaMemcpyDeviceToHost);
+    float * h_ln_out_gpu = (float *)malloc(input_elements_number * sizeof(float));
+    f16_to_f32(y_gpu, h_ln_out_gpu, input_elements_number);
+    Tensor out_layer(h_ln_out_gpu,input_elements_number,B,T,C);
+    out_layer.print();
+
+    //-Attention
+    attention_device( 
+        cudnn_handle,
+        d_y, d_t,
+        fused_desc
+    );
+   
+
+    cudaMemcpy(y_gpu, d_t, sizeof(half) * input_elements_number, cudaMemcpyDeviceToHost);
+    float * h_out_gpu = (float *)malloc(input_elements_number * sizeof(float));
+    f16_to_f32(y_gpu, h_out_gpu, input_elements_number);
+    Tensor out_attn(h_out_gpu,input_elements_number,B,T,C);
+    out_attn.print();
+    
+    //-Residual
+    residual_strided<<<T,C,0,stream1>>>((half*)d_t,(half*)d_x,input_elements_number, LAYER_SCALE);
+
+    cudaMemcpy(y_gpu, d_x, sizeof(half) * input_elements_number, cudaMemcpyDeviceToHost);
+    h_out_gpu = (float *)malloc(input_elements_number * sizeof(float));
+    f16_to_f32(y_gpu, h_out_gpu, input_elements_number);
+    Tensor out_tmp(h_out_gpu,input_elements_number,B,T,C);
+    out_tmp.print();
+
+    //-Layer Norm
+    cub_single_layer_norm<<<ln_blocks_n,C,0,stream1>>>((half *)d_x, (half *)d_y,d_n2_scale, d_n2_bias, gpu_epsilon, 1);
+
+    cout << "ln 2" << endl;
+    cudaMemcpy(y_gpu, d_y, sizeof(half) * input_elements_number, cudaMemcpyDeviceToHost);
+    h_out_gpu = (float *)malloc(input_elements_number * sizeof(float));
+    f16_to_f32(y_gpu, h_out_gpu, input_elements_number);
+    Tensor out_layer_2(h_out_gpu,input_elements_number,B,T,C);
+    out_layer_2.print();
+
+    //-MLP
+    if(kernel_type)
+    {
+        fused_gpu_mlp(
+            handle,stream1,
+            matmul, algo, d_workspace,
+            d_y, d_fc1, d_h,d_b1_mtx, d_fc2,d_b2_mtx,d_t
+        );
+
+        cout << "gpu_mlp" << endl;
+        cudaMemcpy(y_gpu, d_t, sizeof(half) * input_elements_number, cudaMemcpyDeviceToHost);
+        h_out_gpu = (float *)malloc(input_elements_number * sizeof(float));
+        f16_to_f32(y_gpu, h_out_gpu, input_elements_number);
+        Tensor out_mlp(h_out_gpu,input_elements_number,B,T,C);
+        out_mlp.print();
+
+        //Transpose
+        cublasLtMatrixTransform(
+            handle, transposeDesc,
+            &alpha, d_t, mlp_out_desc,
+            &beta, nullptr, nullptr,
+            d_y, res_in_desc, stream1
+        );
+
+        cout << "transposed" << endl;
+        cudaMemcpy(y_gpu, d_y, sizeof(half) * input_elements_number, cudaMemcpyDeviceToHost);
+        h_out_gpu = (float *)malloc(input_elements_number * sizeof(float));
+        f16_to_f32(y_gpu, h_out_gpu, input_elements_number);
+        Tensor out_t(h_out_gpu,input_elements_number,B,T,C);
+        out_t.print();        
+
+        //-Residual
+        /*Toy inefficient example to see residual striding work, should be B elements per thread*/
+        residual_strided<<<T,C,0,stream1>>>((half*)d_y,(half*)d_x,input_elements_number, LAYER_SCALE);
+    }
+    else{ //not fused but without the transpose
+        gpu_mlp(
+            handle,stream1,
+            B,T,K,C,
+            matmul, algo, d_workspace,
+            d_y, d_fc1, d_h,d_b1_data, d_fc2,d_b2_data,d_t
+        );
+
+        //-Residual
+        /*Toy inefficient example to see residual striding work, should be B elements per thread*/
+        residual_strided<<<T,C,0,stream1>>>((half*)d_t,(half*)d_x,input_elements_number, LAYER_SCALE);
+    }
+
+    // cout << "gpu_mlp" << endl;
+    // cudaMemcpy(y_gpu, d_t, sizeof(half) * input_elements_number, cudaMemcpyDeviceToHost);
+    // h_out_gpu = (float *)malloc(input_elements_number * sizeof(float));
+    // f16_to_f32(y_gpu, h_out_gpu, input_elements_number);
+    // Tensor out_mlp(h_out_gpu,input_elements_number,B,T,C);
+    // out_mlp.print();
+
+    //-Residual
+    /*Toy inefficient example to see residual striding work, should be B elements per thread*/
+    // residual_strided<<<T,C,0,stream1>>>((half*)d_t,(half*)d_x,input_elements_number, LAYER_SCALE);
+
+    //-Result checks
+    cudaMemcpy(y_gpu, d_x, sizeof(half) * input_elements_number, cudaMemcpyDeviceToHost);
+    /*float * */ h_out_gpu = (float *)malloc(input_elements_number * sizeof(float));
+    f16_to_f32(y_gpu, h_out_gpu, input_elements_number);
+    Tensor out_gpu(h_out_gpu,input_elements_number,B,T,C);
+    out_gpu.print();
+    cout << "avg. difference between CPU and GPU Naive" << compare_results(y, y_gpu) << endl;
+    return;
+
+}
+
+void gpu_comparison(bool fused_mlp){
+    // u_int batch = 2,tokens = 10,channels = 24,hidden = 48;
+    // u_int batch = 2,tokens = 4,channels = 10,hidden = 20;
+    // u_int batch = 2,tokens = 10,channels = 48,hidden = 96;    
+    u_int batch = 16,tokens = 197,channels = 768,hidden = 3072;
+    double epsilon = 1e-4;//1e-5;
+    float scale = 0.1f;// 4 * 1e-5;
+    int num_heads = 12; 
+    
+    bool debug = true;
+    if(debug){
+        batch = 2,tokens = 4,channels = 10,hidden = 20;
+        num_heads = 5;
+    }   
+
+    u_int input_elements_number = batch * tokens * channels;
+    vector<float> h_x(input_elements_number);
+
+    cout << "Tensor: [" << batch << ","<< tokens << "," << channels << "]" << endl;
+    cout << "fc1: [" << channels << ","<< hidden << "]" << endl;
+    cout << "fc2: [" << hidden << ","<< channels << "]" << endl;
+
+    //Descriptors
+    bool attn_init = false; //false == Initialize randomly the attn_descriptor
+    cudaStream_t stream;
+    cublasLtHandle_t ltHandle;
+    cudnnHandle_t cudnnHandle;
+    attn_cuDNN_descriptors fused_desc; /*MHA cuDNN descriptors*/
+    cublasLt_matmul_desc matmul[2]; cublasLtMatmulAlgo_t algo[2]; /*MLP descriptors*/
+    cublasLtMatrixTransformDesc_t transposeDesc; /*MLP Transpose descriptors*/
+    cublasLtMatrixLayout_t mlp_out_desc; cublasLtMatrixLayout_t ln_in_desc ;
+
+
+    //Generate all the descriptors, except attn (need weights for cuDNN)
+    if(debug) cout << "constructor" << endl;
+    GpuBlock gpu_block(
+        batch, tokens, channels, hidden,
+        fused_mlp,
+        epsilon, scale, num_heads
     );
 
-    //-Layer Norm
-    half * d_n1_bias, * d_n1_scale;
-    half gpu_epsilon = __double2half(epsilon);
-    unrolled_multi_elem_cub_ln((half *)d_y, d_n1_scale, d_n1_bias, gpu_epsilon);
-    //-Residual
-    
-    
-    //-Attention
-    // function that compute the mha and keeps the result on the device
+    //To reuse the already instatiated descriptors
+    if(debug) cout << "get" << endl;
+    gpu_block.get_descriptors(
+        stream,
+        ltHandle,
+        cudnnHandle,
+        fused_desc, /*MHA cuDNN descriptors*/
+        matmul, algo, /*MLP descriptors*/
+        transposeDesc, /*MLP Transpose descriptors*/
+        mlp_out_desc, ln_in_desc 
+    );
 
-    //-Layer Norm
-    unrolled_multi_elem_cub_ln();
-    //-Residual
-    //...
+    //Generate random data for all the weights in the encoder block, initialize also the cuDNN attn weights descriptor
+    if(debug) cout << "random gen"<< endl;
+    gpu_block.random_data(attn_init);
+    gpu_block.download_x(h_x.data()); //for debug purposes
+    
+    if(debug) cout << "cpu x tensor" << endl;
+    Tensor x(h_x.data(), input_elements_number, batch, tokens, channels);
+    if(debug)  x.print();
+    
+    if(debug) cout << "forward" << endl;
+    gpu_block.forward(debug);
+    
+    if(debug) cout << "download gpu result" << endl;
+    gpu_block.download_x(h_x.data());
 
-    return;
+    // -- CPU REFERENCE --
+    if(debug) cout << "CPU reference" << endl;
+    Tensor y(batch,tokens,channels);
+    Block cpu_block(channels, num_heads, hidden / channels, true, false, scale, GELU);
+    
+    if(debug) cout << "to CPU" << endl;
+    gpu_block.to_CPU(cpu_block, debug);
+    
+    cpu_block.forward(x,y);
+    if(debug) y.print();
+    cout << "First block difference" << compare_results(y, h_x.data()) << endl;
+
+    if(debug) cout << "second encoder block" << endl;
+    //Initialize the block with the already initialized device pointers (d_x, d_h, d_t, d_y)
+    void * d_x, * d_h, *d_t, * d_y;
+    d_x = gpu_block.d_x; d_h = gpu_block.d_h; d_t = gpu_block.d_t; d_y = gpu_block.d_y;
+    GpuBlock block_2(
+        batch, tokens, channels, hidden,
+        d_x,d_h,d_t,d_y,
+        fused_mlp,
+        epsilon, scale, num_heads, 0.1f
+    );
+
+
+    block_2.stream = stream;
+    block_2.ltHandle = ltHandle;
+    block_2.cudnnHandle = cudnnHandle;
+    block_2.fused_desc = fused_desc;
+    block_2.set_matmul_descriptors(matmul, algo, gpu_block.d_workspace_mlp);
+    block_2.transposeDesc = transposeDesc;
+    block_2.mlp_out_desc = mlp_out_desc;
+    block_2.res_in_desc = ln_in_desc;
+
+    block_2.random_data(attn_init, false); //don't overwrite d_x i want to use precedent block data
+
+    /*CPU REF*/
+    Block cpu_block_2(channels, num_heads, hidden / channels, true, false, scale, GELU);
+    
+    if(debug) cout << "to CPU" << endl;
+    block_2.to_CPU(cpu_block_2, debug);
+    block_2.download_x(h_x.data());
+    Tensor x2(h_x.data(), input_elements_number, batch, tokens, channels);
+    Tensor y2(batch,tokens,channels);
+    //----
+    
+    if(debug) cout << "second forward" << endl;
+    block_2.forward(debug);
+    
+    if(debug)cout << "CPU forward" << endl;
+    cpu_block_2.forward(x2,y2);
+    if(debug) y2.print();
+
+    block_2.download_x(h_x.data());
+    cout << "Second block difference: " << compare_results(y2, h_x.data())<< endl;
+
+    block_2.set_last_block();
+
+
+
+    /*
+    GpuBlock block1(block0); //passing all the descriptors and shapes
+    block1.set_data(data) or block1.random_data(true, false); // Initializing all the weights and the missing descriptor
+    block1.init_attn_descriptor();
+    block1.set_last_block();
+
+    block0.forward();
+    block1.forward();
+    */
 }
 
 int main() {
+    bool fused_mlp = false;
 
-    cpu_gpu_comparison();
+    test_type test = GPU_COMPARISON;
+    if(test == CPU_COMPARISON){
+        cpu_gpu_comparison(fused_mlp);
+    }
+    else{
+        gpu_comparison(fused_mlp);
+    }
+
     return 0;
 }

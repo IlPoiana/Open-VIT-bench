@@ -20,5 +20,4 @@ void load_cprd(const std::string& path, PredictionBatch& prd);
 void store_cprd(const std::string& path, const PredictionBatch& prd);
 
 
-
 #endif // __UTILS_H__

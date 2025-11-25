@@ -52,9 +52,20 @@ void Linear::operator()(const Tensor& x_in, Tensor& x_out) const {
             for (int k=0;k<y.get_C();++k) {
                 cumulate = use_bias==true ? b.at(k) : 0;
                 for (int l=0;l<x_in.get_C();++l) {
+                    //TO REMOVE
+                    if(!isfinite(x_in.at(i,j,l))) {
+                            printf("In the mlp - %f -", x_in.at(i,j,l));
+                            throw std::range_error("Error in CPU mlp input val");
+                        }
+                    //----
                     cumulate += x_in.at(i,j,l) * A.at(k,l);
                 }
-
+                //TO REMOVE
+                if(!isfinite(cumulate)) {
+                        printf("In the mlp - %f -", cumulate);
+                        throw std::range_error("Error in CPU mlp");
+                    }
+                //----
                 y.set(i,j,k,cumulate);
             }
         }
@@ -203,6 +214,12 @@ void LayerNorm::operator()(Tensor& x, vit_size num_heads, vit_size head_dim) con
                     new_val = x.at(i,j, (k*head_dim) + l);
                     new_val = (new_val - mean) * st_dev * g.at(l);
                     new_val += use_bias==true ? b.at(l) : 0;
+                    //TO REMOVE
+                    if(!isfinite(new_val)) {
+                            printf("In the ln - %f -", new_val);
+                            throw std::range_error("Error in CPU ln");
+                        }
+                    //----
                     x.set(i,j, (k*head_dim) + l, new_val);
                 }
             }

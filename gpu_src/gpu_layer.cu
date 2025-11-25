@@ -215,8 +215,8 @@ __device__ void cub_dev_block_ln(
 
     if(idx < stride){
     
-        out[global_idx] = (((x_buff[0] - mean) * hrsqrt( variance + epsilon)) * scale[idx]) + bias[idx] ;        
-        out[global_idx + stride] = (((x_buff[1] - mean) * hrsqrt( variance + epsilon)) * scale[idx + stride]) + bias[idx + stride] ;
+        out[global_idx] = (((x_buff[0] - mean) * hrsqrt( variance + epsilon)) * scale[0]) + bias[0] ;        
+        out[global_idx + stride] = (((x_buff[1] - mean) * hrsqrt( variance + epsilon)) * scale[1]) + bias[1] ;
         
     }  
 }
@@ -277,6 +277,48 @@ __device__ void cub_dev_block_ln(
     }  
 }
 
+//One element per thread, supposing that the launched kernel has blockDim equals to the channel size
+__device__ void cub_dev_block_ln(
+    u_int idx,u_int global_idx,               // N = B*T (flattened), C = channels
+    half * x_data, half * out,      // device pointers
+    half scale, half bias,
+    half epsilon, 
+    cub::BlockReduce<half, CUB_MAX_SH_MEM> &BlockReduce
+    
+){
+    half th_data, x_buff;
+    half th_aggregate; // the result is shared across all the threads
+
+    __shared__ half mean;
+    __shared__ half variance;
+    
+    half c = __int2half_rn(blockDim.x);
+
+    // load 2 elements per thread, to increase threads occupancy!
+    th_data = x_data[global_idx];
+    x_buff = th_data;
+
+    th_aggregate = BlockReduce.Sum(th_data,blockDim.x);
+
+    if(idx == 0)
+        mean = th_aggregate / c;
+    __syncthreads(); // suggested by the doc
+    
+    
+    th_data = (x_buff - mean) * (x_buff - mean);
+    th_aggregate = BlockReduce.Sum(th_data, blockDim.x);
+        
+    if(idx == 0)
+        variance = th_aggregate / c;
+
+    __syncthreads();
+
+    
+    out[global_idx] = (((x_buff - mean) * hrsqrt( variance + epsilon)) * scale) + bias;        
+        
+
+}
+
 //Supposing that each thread has the same number of elements to compute!
 __device__ void dev_multi_elem_cub_ln(
     u_int idx,u_int global_idx,               // N = B*T (flattened), C = channels
@@ -295,12 +337,14 @@ __device__ void dev_multi_elem_cub_ln(
     __shared__ half variance;
     
     half c = __int2half_rn(EMBEDDINGS_SIZE);
-    u_int stride = CUB_LAYER_BLOCK_DIM;
-    u_int offset = global_idx + (idx * (ELEMENTS_PER_TH - 1));
+    u_int stride = CUB_LAYER_MULTI_BLOCK_DIM; 
+    // u_int offset = global_idx + (idx * (ELEMENTS_PER_TH - 1)); 
+    u_int offset;
     if(idx < stride){
     
         for(u_int i = 0; i< ELEMENTS_PER_TH; i++){
-            th_data[i] = x_data[offset+ i];
+            offset = global_idx + stride * i;
+            th_data[i] = x_data[offset];
             x_buff[i] = th_data[i];
         }
 
@@ -325,7 +369,8 @@ __device__ void dev_multi_elem_cub_ln(
 
     if(idx < stride){
         for(u_int i = 0; i< ELEMENTS_PER_TH; i++){
-            out[offset+ i] = (((x_buff[i] - mean) * hrsqrt( variance + epsilon)) * scale[i]) + bias[i] ;        
+            offset = global_idx + stride * i;
+            out[offset] = (((x_buff[i] - mean) * hrsqrt( variance + epsilon)) * scale[i]) + bias[i] ;        
         }
     }  
     return;
@@ -350,12 +395,11 @@ __device__ void dev_unrolled_multi_elem_cub_ln(
     __shared__ half variance;
     
     half c = __int2half_rn(EMBEDDINGS_SIZE);
-    // u_int stride = CUB_LAYER_BLOCK_DIM;
-    u_int offset = global_idx + (idx * (ELEMENTS_PER_TH - 1));
        
+    //TO CHANGE, now not coalesced access!!!!
     #pragma unroll
     for(u_int i = 0; i< ELEMENTS_PER_TH; i++){
-        th_data[i] = x_data[offset+ i];
+        th_data[i] = x_data[global_idx + blockDim.x * i];
         x_buff[i] = th_data[i];
     }
 
@@ -378,7 +422,7 @@ __device__ void dev_unrolled_multi_elem_cub_ln(
 
     #pragma unroll
     for(u_int i = 0; i< ELEMENTS_PER_TH; i++){
-        out[offset+ i] = (((x_buff[i] - mean) * hrsqrt( variance + epsilon)) * scale[i]) + bias[i] ;        
+        out[global_idx + blockDim.x * i] = (((x_buff[i] - mean) * hrsqrt( variance + epsilon)) * scale[i]) + bias[i] ;        
     }  
     return;
 }
@@ -409,7 +453,7 @@ __global__ void gpu_layer_norm(
 }
 
 
-//More than one token per block to compute(no sh. mem used)
+//More than one token per block to compute(no sh. mem used) DEPRECATED
 __global__ void multi_block_layer_norm(
     u_int C, u_int tokens_n,u_int tokens_block_n, 
     half * x_data,      // device pointers
@@ -511,6 +555,39 @@ __global__ void cub_layer_norm(
 
 }
 
+//Single element per thread for CUB
+__global__ void cub_single_layer_norm(
+    half * x_data, half * out,     // device pointers
+    half * scale, half * bias,      // device pointers
+    half epsilon, 
+    u_int tokens_per_block
+){
+    u_int local_idx = threadIdx.x;
+    u_int global_idx = blockIdx.x * blockDim.x * tokens_per_block + local_idx;
+    
+    half th_bias, th_scale;
+    
+    th_bias = bias[local_idx];   
+    th_scale = scale[local_idx]; 
+
+    using BlockReduce = cub::BlockReduce<half, CUB_MAX_SH_MEM>;
+    __shared__ BlockReduce::TempStorage cub_shared_storage;
+    BlockReduce block_reduce(cub_shared_storage);
+    //Compute the stride between tokens
+    // #pragma unroll // This when the token embeddings and the token number is fixed will help a lot
+    u_int loop_idx = 0;
+    for(u_int token = 0; (token < tokens_per_block); ++token){
+        loop_idx = global_idx + blockDim.x * token;        
+        cub_dev_block_ln(
+            local_idx, loop_idx,
+            x_data, out,
+            th_scale, th_bias,
+            epsilon,
+            block_reduce
+        );
+    }
+}
+
 // Layer Norm, using CUB for reduction, M elements to compute per token per thread and N tokens to compute per block.
 __global__ void multi_elem_cub_ln(
     half * x_data,      // device pointers
@@ -523,8 +600,8 @@ __global__ void multi_elem_cub_ln(
     half th_bias[ELEMENTS_PER_TH], th_scale[ELEMENTS_PER_TH];
     
     for(u_int i = 0; i < ELEMENTS_PER_TH; i++){
-        th_bias[i] = bias[(local_idx * ELEMENTS_PER_TH) + i];         
-        th_scale[i] = scale[(local_idx* ELEMENTS_PER_TH) + i]; 
+        th_bias[i] = bias[local_idx + i * blockDim.x];         
+        th_scale[i] = scale[local_idx+ i * blockDim.x]; 
     }
 
     using BlockReduce = cub::BlockReduce<half, CUB_LAYER_MULTI_BLOCK_DIM>;
@@ -558,9 +635,10 @@ __global__ void unrolled_multi_elem_cub_ln(
     
     half th_bias[ELEMENTS_PER_TH], th_scale[ELEMENTS_PER_TH];
     
+    #pragma unroll
     for(u_int i = 0; i < ELEMENTS_PER_TH; i++){
-        th_bias[i] = bias[(local_idx * ELEMENTS_PER_TH) + i];         
-        th_scale[i] = scale[(local_idx* ELEMENTS_PER_TH) + i]; 
+        th_bias[i] = bias[local_idx + i * CUB_LAYER_MULTI_BLOCK_DIM];         
+        th_scale[i] = scale[local_idx+ i * CUB_LAYER_MULTI_BLOCK_DIM]; 
     }
 
     using BlockReduce = cub::BlockReduce<half, CUB_LAYER_MULTI_BLOCK_DIM>;
@@ -570,7 +648,7 @@ __global__ void unrolled_multi_elem_cub_ln(
     u_int loop_idx = 0;
     #pragma unroll // This when the token embeddings and the token number is fixed will help a lot
     for(u_int token = 0; (token < TOKENS_PER_BLOCK); ++token){
-        loop_idx = global_idx + EMBEDDINGS_SIZE * token;        
+        loop_idx = global_idx + EMBEDDINGS_SIZE * token;
         dev_unrolled_multi_elem_cub_ln(
             local_idx, loop_idx,
             x_data, x_data,
@@ -579,51 +657,6 @@ __global__ void unrolled_multi_elem_cub_ln(
             block_reduce
         );
     }
-    
-
-}
-
-// Version for the 197 tokens of ViT, 197 is a prime number so I have to put one more token on the last block to compute
-__global__ void vit_gpu_layer_norm(
-    half * x_data,      // device pointers
-    half * scale, half * bias,      // device pointers
-    half epsilon
-){
-    u_int local_idx = threadIdx.x;
-    u_int global_idx = blockIdx.x * EMBEDDINGS_SIZE * TOKENS_PER_BLOCK + local_idx;
-    
-    half th_bias[ELEMENTS_PER_TH], th_scale[ELEMENTS_PER_TH];
-    
-    for(u_int i = 0; i < ELEMENTS_PER_TH; i++){
-        th_bias[i] = bias[(local_idx * ELEMENTS_PER_TH) + i];         
-        th_scale[i] = scale[(local_idx* ELEMENTS_PER_TH) + i]; 
-    }
-
-    using BlockReduce = cub::BlockReduce<half, CUB_LAYER_MULTI_BLOCK_DIM>;
-    __shared__ BlockReduce::TempStorage cub_shared_storage;
-    BlockReduce block_reduce(cub_shared_storage);
-    //Compute the stride between tokens
-    u_int loop_idx = 0;
-    #pragma unroll // This when the token embeddings and the token number is fixed will help a lot
-    for(u_int token = 0; (token < TOKENS_PER_BLOCK); ++token){
-        loop_idx = global_idx + EMBEDDINGS_SIZE * token;        
-        dev_unrolled_multi_elem_cub_ln(
-            local_idx, loop_idx,
-            x_data, x_data,
-            th_scale, th_bias,
-            epsilon,
-            block_reduce
-        );
-    }
-
-    if(blockIdx.x == (blockDim.x - 1))
-        dev_unrolled_multi_elem_cub_ln(
-            local_idx, loop_idx,
-            x_data, x_data,
-            th_scale, th_bias,
-            epsilon,
-            block_reduce
-        );
     
 
 }

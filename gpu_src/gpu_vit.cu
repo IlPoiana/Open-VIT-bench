@@ -35,9 +35,6 @@ GpuViT::GpuViT(VisionTransformer & vit)
     
     // linear_data get_head();
     // linear_shape get_head_shape();
-
-    auto yesno = [](vit_bool b){ return b ? "true" : "false"; };
-
     cout << "=== VisionTransformer attributes ===" << endl;
 
     // Basic config
@@ -65,21 +62,28 @@ GpuViT::GpuViT(VisionTransformer & vit)
     cout << "kernel_shape       : [" << kshape[0] << "," << kshape[1] << "," << kshape[2]
             << "," << kshape[3] << "," << kshape[4] << "," << kshape[5] << "]" << endl;
 
-    
     vit_float* kptr = vit.get_conv2d_kernel();
     vit_float* bptr = vit.get_conv2d_bias();
+    cout << "conv2d use_bias    : " << yesno(vit.get_conv2d_use_bias()) << endl;
     cout << "kernel sample      : " << (kptr ? std::to_string(kptr[0]) : "null") << endl;
     cout << "bias sample        : " << (bptr ? std::to_string(bptr[0]) : "null") << endl;
 
     layer_shape pln_s = vit.get_patch_layer_shape();
     cout << "patch LN g_size    : " << pln_s.g_size
             << "  bias_size: " << pln_s.bias_size << endl;
-    cout << "layer_use_norm   : " << yesno(vit.get_layer_use_norm()) << endl;
-    if(vit.get_layer_use_norm()){
+    cout << "patch_emb_use_norm  : " << yesno(vit.get_patch_emb_use_norm()) << endl;
+    if(vit.get_patch_emb_use_norm()){
         layer_data  pln   = vit.get_patch_layer_norm();    
         cout << "  eps: " << pln.eps
             << "  use_bias: " << yesno(pln.use_bias) << endl;
     }
+
+    cout << "Pos embeddings: ";
+    int pos_shape[2];
+    vit.get_pos_embed_shape(pos_shape);
+    cout << "[" <<pos_shape[0] << "," << pos_shape[1] << "]" << endl;
+    // Matrix pos_emb(vit.get_pos_embed(), pos_shape[0] * pos_shape[1],pos_shape[0], pos_shape[1]);
+    // pos_emb.print();
 
     cout << "\n-- Blocks --" << endl;
     u_int depth = vit.get_blocks_number();
@@ -90,13 +94,20 @@ GpuViT::GpuViT(VisionTransformer & vit)
 	cout << " block attention dim: " << blocks[0].attention.dim << endl;
 	cout << " block attention head_dim: " << blocks[0].attention.head_dim << endl;
 	cout << " block attention num heads: " << blocks[0].attention.num_heads << endl;
+    cout << " block attention proj ln: " << yesno(blocks[0].attention.use_qk_norm) << endl;
+    cout << " block mlp ln: " << yesno(blocks[0].mlp.use_norm) << endl;
 
+    // linear_data blk0_attn_k = blocks[0].attention.k_gen;
+    // Matrix host_k(blk0_attn_k.A, blk0_attn_k.in_features * blk0_attn_k.out_features, blk0_attn_k.in_features, blk0_attn_k.out_features);
+    // cout << "block 0 k attention matrix: "; host_k.print();
 
     for(u_int idx = 0; idx < block_s.size(); idx++){
         cout << idx <<" block k_gen_shape: col " << block_s[idx].attention_shape.k_gen_shape.a_col <<
         " row: " <<  block_s[idx].attention_shape.k_gen_shape.a_row << endl;
         cout << idx <<" block attention dim: " << blocks[idx].attention.dim << endl;
-        cout << idx <<" block layer norm shape: " << block_s[idx].norm1_shape.g_size << "- bias -" <<block_s[idx].norm1_shape.bias_size <<endl;
+        cout << idx <<" block attention projections bias: " << yesno(blocks[idx].attention.proj.use_bias) << endl;
+        cout << idx <<" block attention use layer norm: " << yesno(blocks[idx].attention.use_qk_norm) << endl;
+        cout << idx <<" block layer norm shape: " << block_s[idx].norm1_shape.g_size << "- bias -" <<block_s[idx].norm1_shape.bias_size <<endl<<endl;
     }
 
     if(vit.get_use_pre_norm()){

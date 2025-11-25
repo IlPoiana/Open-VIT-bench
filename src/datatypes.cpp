@@ -13,18 +13,34 @@ layer_data::layer_data(vit_float * i_g,vit_float * i_bias,vit_float i_eps,vit_bo
     use_bias = i_use_bias;
 }
 
+layer_data::layer_data(){
+    g = nullptr;
+    bias = nullptr;
+    eps = 0.0f;
+    use_bias = false;
+};
+
 layer_shape::layer_shape(vit_size i_g, vit_size i_b): g_size(i_g), bias_size(i_b){}
 
 scale_data::scale_data(vit_size i_dim, vit_float i_val): dim(i_dim), val(i_val){}
 
-linear_data::linear_data(vit_float *i_a, vit_float * i_b, vit_size in_f, vit_size out_f, vit_bool i_use_bias): in_features(in_f), out_features(out_f), use_bias(i_use_bias){
+linear_data::linear_data(vit_float *i_a, vit_float * i_b, vit_size in_f, vit_size out_f, vit_bool i_use_bias):
+in_features(in_f), out_features(out_f), use_bias(i_use_bias) {
     A = i_a;
     b = i_b;
 }
 
 linear_shape::linear_shape(vit_size a_r, vit_size a_c, vit_size b_s): a_row(a_r), a_col(a_c), b_size(b_s){}
 
-attn_data::attn_data(linear_data q_g, linear_data k_g, linear_data v_g, layer_data q_n, layer_data k_n, linear_data i_proj, vit_size i_dim, vit_size num_h, vit_size head_d, vit_float scal, vit_bool use_qk_n):
+attn_data::attn_data(
+    linear_data q_g, linear_data k_g, linear_data v_g,
+    layer_data q_n, layer_data k_n,
+    linear_data i_proj,
+    vit_size i_dim, 
+    vit_size num_h, vit_size head_d,
+    vit_float scal,
+    vit_bool use_qk_n
+):
     dim(i_dim),
     num_heads(num_h),
     head_dim(head_d),
@@ -33,9 +49,9 @@ attn_data::attn_data(linear_data q_g, linear_data k_g, linear_data v_g, layer_da
     q_gen(q_g.A,  q_g.b,  q_g.in_features,  q_g.out_features,  q_g.use_bias),
     k_gen(k_g.A,  k_g.b,  k_g.in_features,  k_g.out_features,  k_g.use_bias),
     v_gen(v_g.A,  v_g.b,  v_g.in_features,  v_g.out_features,  v_g.use_bias),
-    proj(proj.A,  proj.b,  proj.in_features,  proj.out_features,  proj.use_bias),
-    q_norm(q_norm.g = q_n.g,q_norm.bias = q_n.bias,q_norm.eps = q_n.eps,q_norm.use_bias = q_n.use_bias),
-    k_norm(k_norm.g = k_n.g,k_norm.bias = k_n.bias,k_norm.eps = k_n.eps,k_norm.use_bias = k_n.use_bias)
+    proj(i_proj.A,  i_proj.b,  i_proj.in_features,  i_proj.out_features,  i_proj.use_bias),
+    q_norm(q_n.g, q_n.bias, q_n.eps, q_n.use_bias),
+    k_norm(k_n.g, k_n.bias, k_n.eps, k_n.use_bias)
 {}
 
 attn_shape::attn_shape(linear_shape q_gen_s, linear_shape k_gen_s, linear_shape v_gen_s, layer_shape q_norm_s, layer_shape k_norm_s, linear_shape proj_s):

@@ -176,6 +176,10 @@ vit_float * VisionTransformer::get_conv2d_bias() {
     return patch_embed.get_conv2d_bias();
 }
 
+vit_bool VisionTransformer::get_conv2d_use_bias(){
+    return patch_embed.get_use_bias();
+}
+
 void VisionTransformer::get_kernel_shape(int kernel_shape[6]){
     patch_embed.get_kernel_dimensions(kernel_shape);
 }
@@ -205,7 +209,7 @@ layer_shape VisionTransformer::get_patch_layer_shape(){
     return data;
 }
 
-vit_bool VisionTransformer::get_layer_use_norm()
+vit_bool VisionTransformer::get_patch_emb_use_norm()
 {
     return patch_embed.get_use_norm();
 }
@@ -370,7 +374,7 @@ linear_shape VisionTransformer::get_head_shape()
 
 //
 
-void VisionTransformer::move_cls_token(RowVector _cls_token) {
+void VisionTransformer::move_cls_token(RowVector &_cls_token) {
     cls_token = std::move(_cls_token);
 }
 
@@ -378,11 +382,11 @@ void VisionTransformer::move_reg_token(Matrix _reg_token) {
     reg_token = std::move(_reg_token);
 }
 
-void VisionTransformer::move_pos_embed(Matrix _pos_embed) {
+void VisionTransformer::move_pos_embed(Matrix &_pos_embed) {
     pos_embed = std::move(_pos_embed);
 }
 
-void VisionTransformer::move_patch_embed(PatchEmbed _patch_embed) {
+void VisionTransformer::move_patch_embed(PatchEmbed &_patch_embed) {
     patch_embed = std::move(_patch_embed);
 }
 
@@ -594,6 +598,7 @@ void VisionTransformer::position_embed(const Tensor& x_in, Tensor& x_out) const 
             }
         }
 
+        //Copying the cls_token into y
         for (int i=0;i<y.get_B();++i) {
             if (has_class_token == true) {
                 for (int k=0;k<y.get_C();++k) {
@@ -604,7 +609,7 @@ void VisionTransformer::position_embed(const Tensor& x_in, Tensor& x_out) const 
                     y.set(i, 0, k, val);
                 }
             }
-
+            //Adding the positional embeddings to the val and populate y
             for (int j=0;j<reg_token.get_ROWS();++j) {
                 for (int k=0;k<y.get_C();++k) {
                     val = reg_token.at(j, k);
@@ -622,7 +627,7 @@ void VisionTransformer::position_embed(const Tensor& x_in, Tensor& x_out) const 
                     }
                 }
             }
-
+            
             for (int j=0;j<x_in.get_N();++j) {
                 for (int k=0;k<y.get_C();++k) {
                     val = x_in.at(i, j, k);

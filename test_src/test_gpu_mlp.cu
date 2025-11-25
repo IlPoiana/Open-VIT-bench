@@ -17,18 +17,20 @@ void transpose_out_of_place(const T* A, T* B, std::size_t M, std::size_t N) {
         }
     }
 }
-// ----
 
-#include <bits/stdc++.h>
-#include <curand_kernel.h>
-
-__global__ void generate_reference(float * x, u_int total_n){
-    u_int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    curandStatePhilox4_32_10_t state;
-    curand_init(0, /*subsequence*/ idx, /*offset*/ 0, &state);
-    if(idx < total_n)
-        x[idx] = (curand_uniform(&state) * 2) - 1.0f;
-        // x[idx] = 1.0f;
+double compare_results(Tensor &y, half * gpu_y){
+    double avg = 0;
+    for(u_int b = 0; b < y.get_B(); b++){
+        for(u_int t = 0; t < y.get_N(); t++){
+            for(u_int c = 0; c < y.get_C(); c++){
+                assert(!isnanf( y.at(b,t,c)));
+                assert(!isnanf( __half2float(gpu_y[c + y.get_C() * t + y.get_C() * y.get_N() * b])));
+                avg += (double)abs(y.at(b,t,c) - __half2float(gpu_y[c + y.get_C() * t + y.get_C() * y.get_N() * b]));
+                
+            }
+        }
+    }
+    return avg / (double(y.get_B()) * y.get_N() * y.get_C());
 }
 
 void cpu_gpu_comparison(){
@@ -65,16 +67,6 @@ void cpu_gpu_comparison(){
     cout << "### b1" << endl;
     b1.print();
 
-    vit_float g_data[K] = {-0.449260, 0.526095, -0.848171, 0.756657, -0.582461, -0.868600, 0.862067, 0.813660, 0.357612, -0.733909};
-    RowVector g(g_data, K);
-    cout << "### g" << endl;
-    g.print();
-
-    vit_float bg_data[K] = {93.780, -98.251, 49.954, -19.055, -9.098, 48.841, 86.411, -95.742, -72.392, 62.226};
-    RowVector bg(bg_data, K);
-    cout << "### bg" << endl;
-    bg.print();
-
     vit_float A2_data[M*K] = {
          -2.005, -14.575,  17.934, -29.395,  -5.142,  28.463,  32.815, -74.448,  76.309,   0.199,
         -32.319, -50.704,  79.610, -53.554, -59.941,  -4.564,   7.415,  50.209, -28.249,  67.815,
@@ -100,9 +92,6 @@ void cpu_gpu_comparison(){
     Linear fc2(K, M, true);
     fc2.move_A(A2);
     fc2.move_b(b2);
-    LayerNorm norm(K, 0.00001, true);
-    norm.move_g(g);
-    norm.move_b(bg);
 
     // WATCH OUT FOR LAYER NORM!!
     // Mlp mlp(5, 10, 8, GELU, true, true);
@@ -110,7 +99,6 @@ void cpu_gpu_comparison(){
     Mlp mlp(C, K, M, GELU, true, false);
 
     mlp.move_fc1(fc1);
-    mlp.move_norm(norm);
     mlp.move_fc2(fc2);
 
     
@@ -137,9 +125,6 @@ void cpu_gpu_comparison(){
     Tensor x(x_data, B*N*C, B, N, C);
     cout << "### x" << endl;
     x.print();
-
-    
-    
     
     // B, N, C
     Tensor x_in(x_data, B*N*C, B, N, C);
@@ -148,8 +133,6 @@ void cpu_gpu_comparison(){
     Linear test_fc1(C, K, true);
     
     Matrix t_A1(A1_data, K*C, K, C);
-    
-    //
     
     RowVector t_B1(b1_data, K);
 
@@ -224,8 +207,6 @@ void cpu_gpu_comparison(){
     cublasLtHandle_t handle;CUBLAS_CHECK(cublasLtCreate(&handle));
     cudaStream_t stream1;
     cudaStreamCreate(&stream1);
-
-    cout << "GPU MLP: " <<endl;
     
     bool test = false;
     if(test){
@@ -240,36 +221,11 @@ void cpu_gpu_comparison(){
     );
     CUDA_CHECK(cudaMemcpy(y_gpu,d_y, sizeof(half) * B * N * M, cudaMemcpyDeviceToHost));
 
-    
-    
-    float avg_difference = 0;
-
-    float float_gpu_y[B*N*M]; // N * C x C * K
-    for(u_int b = 0; b < B; b++){
-        cout<< "B:" << b << "[" << endl;
-        for(u_int n = 0; n < N; n++){
-            for(u_int k = 0; k < M; k++){
-                float_gpu_y[b*N*M + n*M + k] = __half2float( y_gpu[b*N*M + n*M + k]);
-                cout << " " << float_gpu_y[b*N*M + n*M + k] << " ";
-            }
-            cout << endl;
-        }
-        cout << "]" << endl;
-    }
-
-    avg_difference = 0;
-
-    cout << "avg difference for CPU/GPU MLP: ";
-    for(u_int b = 0; b < B; b++){
-        for(u_int t = 0; t < N; t++){
-            for(u_int c = 0; c < M; c++){
-                avg_difference += abs( y.at(b,t,c) - float_gpu_y[b*N*M + t*M + c]); 
-            }
-        }
-    }
-    
-    avg_difference /= (B * N *M);
-    cout << avg_difference << endl;
+    vector<float> host_gpu(B * N * M);
+    f16_to_f32(y_gpu, host_gpu.data(), B * N * M);
+    Tensor out(host_gpu.data(),B * N * M, B, N, M);
+    cout << "GPU MLP" << endl; out.print();
+    cout << "avg difference for CPU/GPU MLP: "  << compare_results(y, y_gpu) << endl;
     
     // -- FUSED GPU MLP --
     CUDA_CHECK(cudaMemset(d_h, 0, sizeof(half) * B * N * K));
@@ -284,46 +240,25 @@ void cpu_gpu_comparison(){
     CUDA_CHECK(cudaMemcpy(temp_gpu,d_y, sizeof(half) * B * N * M, cudaMemcpyDeviceToHost));
     transpose_out_of_place(temp_gpu, y_gpu, M,B*N);
 
-    avg_difference = 0;
-
-    // float_gpu_y[B*N*M]; // N * C x C * K
-    for(u_int b = 0; b < B; b++){
-        cout<< "B:" << b << "[" << endl;
-        for(u_int n = 0; n < N; n++){
-            for(u_int k = 0; k < M; k++){
-                float_gpu_y[b*N*M + n*M + k] = __half2float( y_gpu[b*N*M + n*M + k]);
-                cout << " " << float_gpu_y[b*N*M + n*M + k] << " ";
-            }
-            cout << endl;
-        }
-        cout << "]" << endl;
-    }
-
-    avg_difference = 0;
-
-    cout << "avg difference for CPU/GPU-FUSED MLP: ";
-    for(u_int b = 0; b < B; b++){
-        for(u_int t = 0; t < N; t++){
-            for(u_int c = 0; c < M; c++){
-                avg_difference += abs(y.at(b,t,c) - float_gpu_y[b*N*M + t*M + c]); 
-            }
-        }
-    }
-    
-    avg_difference /= (B * N *M);
-    cout << avg_difference << endl;
-
+    f16_to_f32(y_gpu, host_gpu.data(), B * N * M);
+    Tensor out_fused(host_gpu.data(),B * N * M, B, N, M);
+    cout << "GPU MLP" << endl; out_fused.print();
+    cout << "avg difference for CPU/GPU-FUSED MLP: " << compare_results(y, y_gpu) << endl;
 
     return;
 }
 
 // Two implementation comparison
 void gpu_comparison(){
-    u_int B = 256,T = 196,C = 768,K = 3072,M = 768;
+    bool debug = true;
+
+    u_int B = 32,T = 196,C = 768,K = 3072,M = 768;
+    if(debug){
+        B = 4,T = 16,C = 64,K = 16,M = 8;
+    }
     cout << "Tensor: [" << B << ","<< T << "," << C << "]" << endl;
     cout << "fc1: [" << C << ","<< K << "]" << endl;
     cout << "fc2: [" << K << ","<< M << "]" << endl;
-
 
     //-Host allocation
     float * x_data, * b1_data,* b2_data,* A1_data,* A2_data;
@@ -336,7 +271,6 @@ void gpu_comparison(){
     b2_data = (float*)malloc(sizeof(float) * M);
     A1_data = (float*)malloc(sizeof(float) * C * K);
     A2_data = (float*)malloc(sizeof(float) * M * K);
-
 
     //-Device allocation
     float * d_ref, * d_a1,* d_a2;
@@ -351,11 +285,19 @@ void gpu_comparison(){
     u_int block_num = (input_elements_number/ block_size) + 1; 
     generate_reference<<<block_num, block_size>>>(d_ref, input_elements_number);
     CUDA_CHECK(cudaMemcpy(x_data, d_ref, sizeof(float) * input_elements_number, cudaMemcpyDeviceToHost));
+    if(debug){
+        Tensor tmp(x_data, input_elements_number, B, T, C);
+        cout << "x" << endl; tmp.print();
+    }
 
     //-bias fc1
     // cout << "bias" << endl;
-    for(u_int i = 0; i < K; i++){
-        b1_data[i] = 1.0;
+    block_num = (K/ block_size) + 1; 
+    generate_reference<<<block_num, block_size>>>(d_ref,K);
+    CUDA_CHECK(cudaMemcpy(b1_data, d_ref, sizeof(float) * K, cudaMemcpyDeviceToHost));
+    if(debug){
+        RowVector tmp(b1_data, K);
+        cout << "b1" << endl; tmp.print();
     }
 
     //-fc1
@@ -363,11 +305,18 @@ void gpu_comparison(){
     block_num = ((C * K )/ block_size) + 1; 
     generate_reference<<<block_num, block_size>>>(d_a1, C * K);
     CUDA_CHECK(cudaMemcpy(A1_data,d_a1 , sizeof(float) * C * K, cudaMemcpyDeviceToHost));
-    
+    if(debug){
+        Matrix tmp(A1_data, C*K, C, K);
+        cout << "fc1" << endl; tmp.print();
+    }
+
     //-bias fc2
-    // cout << "bias2" << endl;
-    for(u_int i = 0; i < M; i++){
-        b2_data[i] = 1.0;
+    block_num = (M/ block_size) + 1; 
+    generate_reference<<<block_num, block_size>>>(d_ref,M);
+    CUDA_CHECK(cudaMemcpy(b2_data, d_ref, sizeof(float) * M, cudaMemcpyDeviceToHost));
+    if(debug){
+        RowVector tmp(b2_data, M);
+        cout << "b2" << endl; tmp.print();
     }
 
     //-fc2
@@ -375,6 +324,10 @@ void gpu_comparison(){
     block_num = ((K *M)/ block_size) + 1; 
     generate_reference<<<block_num, block_size>>>(d_a2, K * M);
     CUDA_CHECK(cudaMemcpy(A2_data, d_a2, sizeof(float) * K * M, cudaMemcpyDeviceToHost));
+    if(debug){
+        Matrix tmp(A2_data, K*M, K, M);
+        cout << "fc2" << endl; tmp.print();
+    }
 
     void * d_x,
     * d_b1_data, * d_b1_mtx,* d_b2_data, * d_b2_mtx,
@@ -433,7 +386,7 @@ void gpu_comparison(){
     
     mlp.forward(x, y);
     cout << "CPU MLP REFERENCE: " << endl;
-
+    if(debug) y.print();
     //-GPU 
     // cudaEvent_t start, stop;
     // cudaEventCreate(&start); cudaEventCreate(&stop);
@@ -453,12 +406,6 @@ void gpu_comparison(){
     CUDA_CHECK(cudaMemsetAsync(d_h, 0, sizeof(half) * hidden_elements_number, stream1));
     CUDA_CHECK(cudaMemsetAsync(d_y, 0, sizeof(half) * output_elements_number, stream1));
 
-    // fused_gpu_mlp(
-    //     handle, stream1,
-    //     B,T,C,K,M,
-    //     d_x, d_fc1, d_h,d_b1_mtx, d_fc2,d_b2_mtx,d_y
-    // );
-
     //TESTING
     cublasLt_matmul_desc matmul[2];
     cublasLtMatmulAlgo_t algo[2];
@@ -477,59 +424,19 @@ void gpu_comparison(){
     CUDA_CHECK(cudaMemcpy(temp_gpu,d_y, sizeof(half) * output_elements_number, cudaMemcpyDeviceToHost));
     transpose_out_of_place(temp_gpu, y_gpu_fused, M,B*T);
     // cout << "transpose ok" << endl;
+    if(debug){
+        vector<float> gpu_host(output_elements_number);
+        f16_to_f32(y_gpu, gpu_host.data(),output_elements_number);
+        Tensor out(gpu_host.data(), output_elements_number, B, T, M);
+        f16_to_f32(y_gpu_fused, gpu_host.data(),output_elements_number);
+        Tensor out_fused(gpu_host.data(), output_elements_number, B, T, M);
+        cout << "GPU MLP" << endl; out.print();
+        cout << "GPU-FUSED MLP" << endl; out_fused.print();
+    }
     //-- Comparison --
     //-CPU/GPU
-    float avg_difference = 0;
-
-    float * float_gpu_y = (float *)malloc(sizeof(float)* B*T*M); // T * C x C * K
-    for(u_int b = 0; b < B; b++){
-        for(u_int n = 0; n < T; n++){
-            for(u_int k = 0; k < M; k++){
-                float_gpu_y[b*T*M + n*M + k] = __half2float( y_gpu[b*T*M + n*M + k]);
-            }
-        }
-    }
-
-    avg_difference = 0;
-
-    cout << "avg difference for CPU/GPU MLP: ";
-    for(u_int b = 0; b < B; b++){
-        for(u_int t = 0; t < T; t++){
-            for(u_int c = 0; c < M; c++){
-                avg_difference += abs(y.at(b,t,c) - float_gpu_y[b*T*M + t*M + c]); 
-            }
-        }
-    }
-    
-    avg_difference /= (B * T *M);
-    cout << avg_difference << endl;
-
-    //-CPU/GPU Fused
-    avg_difference = 0;
-
-    for(u_int b = 0; b < B; b++){
-        for(u_int n = 0; n < T; n++){
-            for(u_int k = 0; k < M; k++){
-                float_gpu_y[b*T*M + n*M + k] = __half2float( y_gpu_fused[b*T*M + n*M + k]);
-            }
-        }
-    }
-
-    avg_difference = 0;
-
-    cout << "avg difference for CPU/GPU-FUSED MLP: ";
-    for(u_int b = 0; b < B; b++){
-        for(u_int t = 0; t < T; t++){
-            for(u_int c = 0; c < M; c++){
-                avg_difference += abs(y.at(b,t,c) - float_gpu_y[b*T*M + t*M + c]); 
-            }
-        }
-    }
-    
-    avg_difference /= (B * T *M);
-    cout << avg_difference << endl;
-
-    return;
+    cout << "avg difference for CPU/GPU MLP: " << compare_results(y,y_gpu) << endl;
+    cout << "avg difference for CPU/GPU-FUSED MLP: " << compare_results(y, y_gpu_fused) << endl;
 }
 
 int main() {

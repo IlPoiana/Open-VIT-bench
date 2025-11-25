@@ -26,9 +26,12 @@ int main(int argc, char * argv[]) {
     //loading the kernel
     const string cvit_path = argv[2]; //models/vit_1.cvit
     VisionTransformer vit;
+    cout << "loading vit" << endl;//TO REMOVE
     load_cvit(cvit_path, vit);
-
-
+    VisionTransformer vit2;
+    cout << "loading vit 2" << endl;//TO REMOVE
+    load_cvit("./models/vit_2.cvit", vit2);
+    
     __half pic_data[2*3*12*12] = {
          0.851,   0.029,   0.295,  -0.427,  -0.986,  -0.811,   0.780,  -0.634,   0.040,   0.572,  -0.081,   0.222,
          0.733,   0.774,   0.949,  -0.524,  -0.946,  -0.922,  -0.503,  -0.286,  -0.056,   0.032,   0.442,  -0.006,
@@ -120,6 +123,8 @@ int main(int argc, char * argv[]) {
     */
 
     GpuViT gpu_vit = GpuViT(vit);
+    cout << "vit 2" << endl;
+    GpuViT gpu_vit2 = GpuViT(vit2);
 
     // 2 Run ViT forward
     /*

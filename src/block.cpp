@@ -237,16 +237,22 @@ void Block::from_ifstream(std::ifstream& is) {
 }
 
 void Block::forward(const Tensor& x_in, Tensor& x_out) const {
+    // /*TO REMOVE*/ printf("x_in\n");x_in.print();
     Tensor y;
     y.copy_tensor(x_in);
     norm1(y);
+    // /*TO REMOVE*/ printf("norm1\n");y.print();
     attn.forward(y, y);
+    // /*TO REMOVE*/ printf("cpu attn\n");y.print();
     ls1(y);
     y += x_in;
+    // /*TO REMOVE*/ printf("scale1\n");y.print();
 
     x_out.copy_tensor(y);
     norm2(x_out);
+    // /*TO REMOVE*/ printf("norm2\n");x_out.print();
     mlp.forward(x_out, x_out);
+    // /*TO REMOVE*/ printf("mlp\n");x_out.print();
     ls2(x_out);
     x_out += y;
 }

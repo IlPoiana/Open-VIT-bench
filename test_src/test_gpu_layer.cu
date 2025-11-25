@@ -158,9 +158,9 @@ void gpu_comparison(){
     float difference = 0.0f;
     
     float * x_data = (float *)malloc(sizeof(float) * total_elements_num);
-    float b2_data[EMBEDDINGS_SIZE] = {0.0f}, g_data[EMBEDDINGS_SIZE];
+    float b2_data[EMBEDDINGS_SIZE] = {0.0f,1.0f,0.5f}, g_data[EMBEDDINGS_SIZE];
     for(u_int i = 0;i < EMBEDDINGS_SIZE; i ++){
-        g_data[i] = 1.0f; 
+        g_data[i] = (float)i / 10; 
     }
 
     cout << "Tensor: [" << BATCH << ","<< TOKENS_NUM << "," << EMBEDDINGS_SIZE << "]" << endl;

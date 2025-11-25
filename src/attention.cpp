@@ -280,27 +280,21 @@ void Attention::from_ifstream(std::ifstream& is) {
 
 void Attention::forward(const Tensor& x_in, Tensor& x_out) const {
     Tensor query, key, value;
+    
     //UNCOMMENT
     q_gen(x_in, query);
     k_gen(x_in, key);
     v_gen(x_in, value);
+    
     if (use_qk_norm == true) {
         q_norm(query, num_heads, head_dim);
         k_norm(key, num_heads, head_dim);
     }
-
-    // multi_head_attention(query, key, value, scale, x_out, num_heads, head_dim);
     multi_head_attention(query, key, value, scale, x_out, num_heads, head_dim);
 
-
+    //UNCOMMENT
     proj(x_out,x_out);
 }
-
-// void Attention::forward(const Tensor& x_in, Tensor& x_out) const {
-
-//     printf("num_heads :%d, head_dim: %d\n", num_heads, head_dim);
-//     multi_head_attention(x_in, x_in, x_in, scale, x_out, num_heads, head_dim);
-// }
 
 
 void Attention::single_head_attention(
@@ -334,7 +328,7 @@ void Attention::multi_head_attention(
     vit_size N = query.get_N();
     Tensor qk(query.get_B(), N, N * _num_heads);
     Tensor y(query.get_B(), N, query.get_C());
-    printf(" N %d - head_dim %d - scale %lf \n", N, head_dim, _scale);
+    // printf(" N %d | num_heads %d = %d _num_heads | head_dim %d = %d _head_dim | scale %lf \n", N, num_heads, _num_heads,head_dim, _head_dim,_scale);
     vit_float val;
     vit_float cumulative;
     for (int batch=0;batch<y.get_B();++batch) {
@@ -349,11 +343,12 @@ void Attention::multi_head_attention(
                             query.at(batch, q_n, (nh*_head_dim) + c) *
                             key.at(batch, k_n, (nh*_head_dim) + c);
                     }
-                    // printf("- %f -", val);
+                    // printf("- %f -", val); //TO REMOVE
                     val *= _scale;
+                    // printf("\n"); //TO REMOVE
+                    // printf("- %f -", val); //TO REMOVE
                     qk.set(batch, q_n, (nh*N) + k_n, val);
                 }
-                // printf("\n");
             }
 
             // softmax of qk
@@ -361,8 +356,26 @@ void Attention::multi_head_attention(
                 cumulative = 0;
                 for (int qk_c=0;qk_c<N;++qk_c) { // qk is B*N*(N*nh), that's why it's C is also N
                     val = qk.at(batch, qk_n, (nh*N) + qk_c);
+                    //TO REMOVE
+                    if(!isfinite(val)) {
+                        printf("- %f -", val);
+                        throw std::range_error("Error in CPU attention");
+                    }
+                    //----
                     val = std::exp(val);
+                    //TO REMOVE
+                    if(!isfinite(val)) {
+                        printf("After the exponential - %f -", val);
+                        throw std::range_error("Error in CPU attention");
+                    }
+                    //----
                     cumulative += val;
+                    //TO REMOVE
+                    if(!isfinite(cumulative)) {
+                        printf("Cumulative - %f -", cumulative);
+                        throw std::range_error("Error in CPU attention");
+                    }
+                    //----
                     qk.set(batch, qk_n, (nh*N) + qk_c, val);
                 }
                 for (int qk_c=0;qk_c<N;++qk_c) {
@@ -382,7 +395,7 @@ void Attention::multi_head_attention(
                             qk.at(batch, qk_n, (nh*N) + qk_c) *
                             value.at(batch, qk_c, (nh*_head_dim) + v_c);
                     }
-                    // printf("val = %lf \n", val);
+                    // printf("val = %lf \n", val); //TO REMOVE
                     y.set(batch, qk_n, (nh*_head_dim) + v_c, val);
                 }
                 // printf("\n");

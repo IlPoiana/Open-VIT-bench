@@ -3,8 +3,7 @@ THIS FILE IS TAKEN FROM THE cudnn FRONTEND LIBRARY
 
 */
 
-
-#pragma on
+#pragma once
 /*OG includes
 #include <stdexcept>
 #include <sstream>
@@ -41,16 +40,28 @@ div_up(int64_t x, int64_t y) {
                     }                                                                                                     \
     }
                     
-                    // FAIL(err_msg.str());                                                                              
+                    // FAIL(err_msg.str()); 
+
+// #define CUDNN_CHECK(status)                                                                                     \
+//     {                                                                                                           \
+//         cudnnStatus_t err = status;                                                                             \
+//         if (err != CUDNN_STATUS_SUCCESS) {                                                                      \
+//             std::stringstream err_msg;                                                                          \
+//             err_msg << "cuDNN Error: " << cudnnGetErrorString(err) << " (" << err << ") at " << __FILE__ << ":" \
+//                     << __LINE__;                                                                                \
+//                 }                                                                                                       \
+//     }
+
 #define CUDNN_CHECK(status)                                                                                     \
     {                                                                                                           \
         cudnnStatus_t err = status;                                                                             \
         if (err != CUDNN_STATUS_SUCCESS) {                                                                      \
-            std::stringstream err_msg;                                                                          \
-            err_msg << "cuDNN Error: " << cudnnGetErrorString(err) << " (" << err << ") at " << __FILE__ << ":" \
-                    << __LINE__;                                                                                \
-                }                                                                                                       \
+        char buf[256];                                                                                     \
+        std::snprintf(buf, sizeof(buf),"cublas error %d at %s:%d", (int)err, __FILE__, __LINE__);          \
+        throw std::runtime_error(buf);                                                                     \
+        }                                                                                                       \
     }
+ 
             
             // FAIL(err_msg.str());                                                                                
 // Custom deleter for cudnnHandle_t

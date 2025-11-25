@@ -88,16 +88,14 @@ __device__ half GELU(half val){
 
 // In place add and GELU
 __global__ void bias_GELU(half * d_x, half * d_bias, u_int bias_length, u_int N){
-    
-    u_int global_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if(global_idx < N){
-        half val = d_x[global_idx];
-        //add 
-        val += d_bias[global_idx % bias_length];
 
+    for(int stride = blockIdx.x * blockDim.x + threadIdx.x;  stride < N;stride += gridDim.x *  blockDim.x){
+        half val = d_x[stride];
+        //add 
+        val += d_bias[stride % bias_length];
 
         //GELU
-        d_x[global_idx] = GELU(val);
+        d_x[stride] = GELU(val);
         
     }
     return;
@@ -107,10 +105,8 @@ __global__ void bias_GELU(half * d_x, half * d_bias, u_int bias_length, u_int N)
 // In place add and GELU
 __global__ void bias(half * d_x, half * d_bias, u_int bias_length, u_int N){
     
-    u_int global_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if(global_idx < N){
-        //add 
-        d_x[global_idx] += d_bias[global_idx % bias_length];
+    for(int stride = blockIdx.x * blockDim.x + threadIdx.x;  stride < N;stride += gridDim.x *  blockDim.x){
+        d_x[stride] += d_bias[stride % bias_length];
     }
     return;
     
@@ -368,6 +364,41 @@ void linear_layer(
 
 }
 
+/*
+0) We passed the already instantiate matmul descriptor, the algorithm to perform and the workspace.
+*/
+void strided_linear_layer(
+    cublasLtHandle_t & handle, cudaStream_t & stream,
+    u_int B, u_int T, u_int K, u_int stride_val,
+    cublasLt_matmul_desc &matmul,cublasLtMatmulAlgo_t &algo,void * d_workspace,
+    void * d_x, void * d_fc, void * d_b, 
+    void * d_y, bool gelu
+){
+
+    
+    CUBLAS_CHECK(cublasLtMatmul(
+        handle, matmul.matmulDesc, &matmul.alpha,
+        d_x, matmul.xDesc,
+        d_fc, matmul.fcDesc,
+        &matmul.beta,
+        d_y, matmul.cDesc,
+        d_y, matmul.yDesc,
+        &algo, d_workspace, (size_t)MLP_WORKSPACE_SIZE, stream
+    ));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    u_int block_dim = 256;
+    u_int block_num = ((B*T*K) / (stride_val * block_dim)) + 1;
+    if(gelu)
+        bias_GELU<<<block_num,block_dim,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
+    else    
+        bias<<<block_num,block_dim,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    return;
+
+}
+
 /**
  * @brief 
  * d_b has to be a matrix in col-major! (required by cuBLAS for having a fused bias + epilogue working)
@@ -417,7 +448,7 @@ void fused_linear_layer(
     cublasLtHandle_t &handle, cudaStream_t & stream,
     cublasLt_matmul_desc &matmul,cublasLtMatmulAlgo_t &algo,void * d_workspace,
     void * d_x, void * d_fc, void * d_b, 
-    void * y, bool gelu, bool memory_order
+    void * y
 ){
     
     CUBLAS_CHECK(cublasLtMatmul(
@@ -432,6 +463,7 @@ void fused_linear_layer(
     // CUDA_CHECK(cudaStreamSynchronize(stream)); //not necessary cause on the same stream
     return;
 }
+
 
 
 void gpu_mlp(
@@ -465,22 +497,37 @@ void gpu_mlp(
     void * d_x, void * d_fc1, void * d_h,void * d_b1, void * d_fc2, void * d_b2, 
     void * d_y
 ){
-    linear_layer(
+    // linear_layer(
+    //     handle,stream, 
+    //     B,  T, K,
+    //     matmul[0], algo[0], d_workspace,
+    //     d_x, d_fc1, d_b1, d_h, 
+    //     true
+    // );
+    // linear_layer(
+    //     handle,stream,
+    //     B,  T, M,
+    //     matmul[1], algo[1], d_workspace,
+    //     d_h, d_fc2, d_b2, d_y,
+    //     false
+    // );
+    strided_linear_layer(
         handle,stream, 
-        B,  T, K,
+        B,  T, K, 2,
         matmul[0], algo[0], d_workspace,
         d_x, d_fc1, d_b1, d_h, 
         true
     );
-    linear_layer(
+    strided_linear_layer(
         handle,stream,
-        B,  T, M,
+        B,  T, M, 2,
         matmul[1], algo[1], d_workspace,
         d_h, d_fc2, d_b2, d_y,
         false
     );
     return;
 }
+
 
 /*
 Fused MLP
@@ -494,7 +541,8 @@ void fused_gpu_mlp(
     fused_linear_layer(
         handle,stream, 
         B,  T,  C,  K,
-        d_x, d_fc1, d_b1, d_h
+        d_x, d_fc1, d_b1, d_h,
+        true,true
     );
     fused_linear_layer(
         handle,stream,
@@ -518,14 +566,12 @@ void fused_gpu_mlp(
     fused_linear_layer(
         handle,stream, 
         matmul[0], algo[0], d_workspace,
-        d_x, d_fc1, d_b1, d_h,
-        true, true
+        d_x, d_fc1, d_b1, d_h
     );
     fused_linear_layer(
         handle,stream,
         matmul[1], algo[1], d_workspace,
-        d_h, d_fc2, d_b2, d_y,
-        false, false
+        d_h, d_fc2, d_b2, d_y
     );
     return;
 }

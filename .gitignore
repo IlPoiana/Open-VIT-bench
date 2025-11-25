@@ -19,6 +19,8 @@
 /timm_train_vit/data
 .vscode
 
+/deprecated
+
 *.nsys-rep
 cuBLAS.cu
 run_cuBLAS.sh

@@ -77,10 +77,10 @@ void fused_gpu_mlp(
     void * d_y
 );
 
+void bias_matrix(half * d_b, half * d_b_mtx, u_int row, u_int col);
 /*
 FUNCTIONS USED IN DEV PHASE
 */
-void bias_matrix(half * d_b, half * d_b_mtx, u_int row, u_int col);
 
 void GEMM(
     cublasLtHandle_t &handle, cudaStream_t & stream,
@@ -96,13 +96,6 @@ void linear_layer(
     u_int B, u_int T, u_int C, u_int K,
     void * d_x, void * d_fc, void * d_b, 
     void * d_y, bool gelu = true
-);
-
-void fused_linear_layer(
-    cublasLtHandle_t &handle, cudaStream_t & stream,
-    u_int B, u_int T, u_int C, u_int K,
-    void * d_x, void * d_fc, void * d_b, 
-    void * y, bool gelu = true, bool memory_order = true
 );
 
 void cuBLAS_test(cublasLtHandle_t & handle, cudaStream_t & stream);
