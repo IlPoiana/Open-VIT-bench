@@ -424,7 +424,8 @@ void gpu_comparison(bool debug){
     h_conv_weights = (float *)malloc(sizeof(float) * conv_kernel_elements_num);
 
     h_out = (float *)malloc(sizeof(float) * embedded_elements_num);
-    //Random generation
+
+    // Random generation
     /*Host mem for gpu implementation should be pinned!*/
     half * gpu_pic, * gpu_out;
     half * gpu_bias, * gpu_pos_emb, * gpu_conv_weights;

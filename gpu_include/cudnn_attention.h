@@ -78,6 +78,8 @@ struct attn_cuDNN_descriptors{
     std::vector<int> loWin, hiWin;
     size_t weightBytes=0, workBytes=0;
     void* dWeights = nullptr, * dWork = nullptr;
+
+    void destroy_descriptors();
 };
 
 void initialize_attn_descriptors(

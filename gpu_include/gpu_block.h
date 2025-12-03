@@ -216,6 +216,8 @@ public:
     void set_rand_scale(float _scale);
 
     //Call this method to destroy the shared device pointer and descriptors between block, should be called before the destructor call.
+    void mark_shared_buffers();
+
     void set_last_block();
 
     //Initialize the block descriptors 
@@ -254,7 +256,8 @@ private:
     float rand_scale = 0.1f;
     u_int input_elements_number;
     u_int hidden_elements_number;
-    bool destroy_shared_elements = false;
+    bool destroy_shared_buffers = false;
+    bool destroy_shared_weights = false;
 
     //print d_x, d_t, d_h, d_y
     void print_debug();

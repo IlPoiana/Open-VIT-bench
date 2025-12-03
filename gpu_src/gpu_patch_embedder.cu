@@ -102,14 +102,8 @@ GpuPatchEmbedder::~GpuPatchEmbedder(){
         CUDA_CHECK(cudaFree(d_out_pic));
         CUDA_CHECK(cudaFree(d_x));
         CUDA_CHECK(cudaFree(d_t));
-        
         //Free the cudnn descriptors onlt if I'm owning them
-        CUDA_CHECK(cudaFree(conv_desc.d_workspace));
-        cudnnDestroyConvolutionDescriptor(conv_desc.conv_desc);
-        cudnnDestroyTensorDescriptor(conv_desc.x_desc);
-        cudnnDestroyTensorDescriptor(conv_desc.y_desc);
-        cudnnDestroyFilterDescriptor(conv_desc.w_desc);
-
+        CUDA_CHECK(cudaFree(conv_desc.d_workspace));        
     }
 }
 
@@ -117,6 +111,8 @@ void GpuPatchEmbedder::free_weights(){
     CUDA_CHECK(cudaFree(d_w));
     CUDA_CHECK(cudaFree(d_bias));
     CUDA_CHECK(cudaFree(d_pos_emb));
+
+    conv_desc.destroy_descriptors();
 }
 
 //The flatten op results in d_t

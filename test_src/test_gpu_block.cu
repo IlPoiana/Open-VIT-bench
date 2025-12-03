@@ -701,7 +701,7 @@ void gpu_comparison(bool fused_mlp){
     cout << "Second block difference: " << compare_results(y2, h_x.data())<< endl;
 
     block_2.set_last_block();
-
+    block_2.mark_shared_buffers(); //Tell to the destructor to free device pointers
 
 
     /*

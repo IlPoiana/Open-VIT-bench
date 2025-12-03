@@ -294,7 +294,6 @@ __device__ void cub_dev_block_ln(
     
     half c = __int2half_rn(blockDim.x);
 
-    // load 2 elements per thread, to increase threads occupancy!
     th_data = x_data[global_idx];
     x_buff = th_data;
 
@@ -555,7 +554,7 @@ __global__ void cub_layer_norm(
 
 }
 
-//Single element per thread for CUB
+//Single element per thread for CUB, its supposed that the number of blocks launched is equal to the number of elements to compute
 __global__ void cub_single_layer_norm(
     half * x_data, half * out,     // device pointers
     half * scale, half * bias,      // device pointers

@@ -1,5 +1,13 @@
 #include "../gpu_include/gpu_mlp.h"
 
+void cublasLt_matmul_desc::destroy_descriptors(){
+    cublasLtMatmulDescDestroy(matmulDesc);
+    cublasLtMatrixLayoutDestroy(xDesc);
+    cublasLtMatrixLayoutDestroy(fcDesc);
+    cublasLtMatrixLayoutDestroy(cDesc);
+    cublasLtMatrixLayoutDestroy(yDesc);
+}
+
 mlp_dimensions::mlp_dimensions(u_int _B, u_int _T,u_int _C,u_int _K,u_int _M){
     B = _B;
     T = _T;
@@ -114,7 +122,6 @@ __global__ void bias(half * d_x, half * d_bias, u_int bias_length, u_int N){
 
 //Create the descriptors for cublasLt matmul op
 void create_cublasLt_linlay_desc(
-    cublasLtHandle_t &handle,
     u_int B, u_int T, u_int C, u_int K,
     cublasLt_matmul_desc & matmul
 ){
@@ -148,7 +155,6 @@ void create_cublasLt_linlay_desc(
  * @param gelu 
  * @param memory_order: if true, the x matrix will be in row-major, other wise will be in col-major */
 void create_cublasLt_linlay_desc(
-    cublasLtHandle_t &handle,
     u_int B, u_int T, u_int C, u_int K,
     cublasLt_matmul_desc & matmul, 
     bool gelu, bool memory_order
@@ -193,7 +199,7 @@ void create_cublasLt_linlay_desc(
 
 }
 
-cublasLtMatmulAlgo_t fetch_matmul_algos(cublasLtHandle_t &handle,cublasLt_matmul_desc &matmul, void ** d_workspace,  bool initialize_workspace = true){
+cublasLtMatmulAlgo_t fetch_matmul_algos(cublasLtHandle_t &handle,cublasLt_matmul_desc &matmul, void ** d_workspace,  bool initialize_workspace){
     u_int requested_count = 10;
     int count = 0;
     cublasLtMatmulHeuristicResult_t heur_array[requested_count];
@@ -248,7 +254,6 @@ void create_mlp_descriptors(
     //-Layer 1
     if(fused){
         create_cublasLt_linlay_desc(
-            handle,
             B,T,C,K,
             matmul[0],
             true, true
@@ -256,7 +261,6 @@ void create_mlp_descriptors(
     }
     else{
         create_cublasLt_linlay_desc(
-            handle,
             B,T,C,K,
             matmul[0]
         );
@@ -267,7 +271,6 @@ void create_mlp_descriptors(
     //-Layer 2
     if(fused){
         create_cublasLt_linlay_desc(
-            handle,
             B,T,K,M,
             matmul[1],
             false, false
@@ -275,7 +278,6 @@ void create_mlp_descriptors(
     }
     else{
         create_cublasLt_linlay_desc(
-            handle,
             B,T,K,M,
             matmul[1]
         );
@@ -297,7 +299,6 @@ void linear_layer(
 
     cublasLt_matmul_desc matmul;
     create_cublasLt_linlay_desc(
-        handle,
         B,T,C,K,
         matmul
     );
@@ -315,7 +316,7 @@ void linear_layer(
         d_y, matmul.yDesc,
         &algo, d_workspace, (size_t)MLP_WORKSPACE_SIZE, stream
     ));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+    // CUDA_CHECK(cudaStreamSynchronize(stream));
 
     u_int block_dim = 256;
     u_int block_num = ((B*T*K) / block_dim) + 1;
@@ -350,7 +351,7 @@ void linear_layer(
         d_y, matmul.yDesc,
         &algo, d_workspace, (size_t)MLP_WORKSPACE_SIZE, stream
     ));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+    // CUDA_CHECK(cudaStreamSynchronize(stream));
 
     u_int block_dim = 256;
     u_int block_num = ((B*T*K) / block_dim) + 1;
@@ -385,7 +386,7 @@ void strided_linear_layer(
         d_y, matmul.yDesc,
         &algo, d_workspace, (size_t)MLP_WORKSPACE_SIZE, stream
     ));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+    // CUDA_CHECK(cudaStreamSynchronize(stream));
 
     u_int block_dim = 256;
     u_int block_num = ((B*T*K) / (stride_val * block_dim)) + 1;
@@ -393,7 +394,7 @@ void strided_linear_layer(
         bias_GELU<<<block_num,block_dim,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
     else    
         bias<<<block_num,block_dim,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+    // CUDA_CHECK(cudaStreamSynchronize(stream));
 
     return;
 
@@ -415,7 +416,6 @@ void fused_linear_layer(
     cublasLt_matmul_desc matmul;
 
     create_cublasLt_linlay_desc(
-        handle, 
         B, T, C, K,
         matmul, 
         gelu, memory_order
@@ -497,20 +497,6 @@ void gpu_mlp(
     void * d_x, void * d_fc1, void * d_h,void * d_b1, void * d_fc2, void * d_b2, 
     void * d_y
 ){
-    // linear_layer(
-    //     handle,stream, 
-    //     B,  T, K,
-    //     matmul[0], algo[0], d_workspace,
-    //     d_x, d_fc1, d_b1, d_h, 
-    //     true
-    // );
-    // linear_layer(
-    //     handle,stream,
-    //     B,  T, M,
-    //     matmul[1], algo[1], d_workspace,
-    //     d_h, d_fc2, d_b2, d_y,
-    //     false
-    // );
     strided_linear_layer(
         handle,stream, 
         B,  T, K, 2,
@@ -575,6 +561,8 @@ void fused_gpu_mlp(
     );
     return;
 }
+
+// -- DEV phase functions --
 
 void cuBLAS_test(cublasLtHandle_t & handle, cudaStream_t & stream){
     u_int M = 2, N = 3, K = 4;

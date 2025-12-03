@@ -7,6 +7,20 @@ attn_dimensions_gpu::attn_dimensions_gpu(u_int _B,u_int _T,u_int _C,u_int _proj)
     proj_dim = _proj;
 }
 
+void attn_cuDNN_descriptors::destroy_descriptors(){
+    cudnnDestroyDropoutDescriptor(attnDrop);
+    cudnnDestroyDropoutDescriptor(postDrop);
+    cudnnDestroyAttnDescriptor(attn);
+    cudnnDestroySeqDataDescriptor(qDesc);
+    cudnnDestroySeqDataDescriptor(kDesc);
+    cudnnDestroySeqDataDescriptor(vDesc);
+    cudnnDestroySeqDataDescriptor(oDesc);
+    cudaFree(dLenQO);
+    cudaFree(dLenKV);
+    if (weightBytes) cudaFree(dWeights);
+    if (workBytes)   cudaFree(dWork);
+}
+
 /*
 Assuming handle is already initialized
 Initialize the attention descriptors contained in the `descriptors` variable

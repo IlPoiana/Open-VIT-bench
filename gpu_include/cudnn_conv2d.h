@@ -59,6 +59,8 @@ struct convolution_desc{
         convolution_bias_desc &bias_d_,
         void * d_workspace_, size_t &workspace_size_
     );
+
+    void destroy_descriptors();
 };
 
 __global__ void transpose_tensor3d(

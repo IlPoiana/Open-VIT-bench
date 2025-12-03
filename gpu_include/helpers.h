@@ -57,7 +57,7 @@ div_up(int64_t x, int64_t y) {
         cudnnStatus_t err = status;                                                                             \
         if (err != CUDNN_STATUS_SUCCESS) {                                                                      \
         char buf[256];                                                                                     \
-        std::snprintf(buf, sizeof(buf),"cublas error %d at %s:%d", (int)err, __FILE__, __LINE__);          \
+        std::snprintf(buf, sizeof(buf),"cudnn error %d at %s:%d", (int)err, __FILE__, __LINE__);          \
         throw std::runtime_error(buf);                                                                     \
         }                                                                                                       \
     }

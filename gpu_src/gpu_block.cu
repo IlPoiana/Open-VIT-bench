@@ -421,37 +421,33 @@ epsilon(epsilon_), scale(scale_), num_heads(num_heads_), rand_scale(rand_scale_)
 // ---- dtor ----
 GpuBlock::~GpuBlock() {
     cout << "destructor called!" << endl;
-    if(destroy_shared_elements){
+    if(destroy_shared_buffers){
         // free device buffers
         if (d_x)        cudaFree(d_x);
         if (d_t)        cudaFree(d_t);
         if (d_y)        cudaFree(d_y);
         if (d_h)        cudaFree(d_h);
         if (d_workspace_mlp) cudaFree(d_workspace_mlp);
-
+    }
+    
+    if(destroy_shared_weights){
+        if (d_n1_bias)  cudaFree(d_n1_bias);
+        if (d_n1_scale) cudaFree(d_n1_scale);
+        if (d_n2_bias)  cudaFree(d_n2_bias);
+        if (d_n2_scale) cudaFree(d_n2_scale);
+        
+        if (d_fc1)     cudaFree(d_fc1);
+        if (d_b1_data) cudaFree(d_b1_data);
+        if (d_b1_mtx)  cudaFree(d_b1_mtx);
+        if (d_fc2)     cudaFree(d_fc2);
+        if (d_b2_data) cudaFree(d_b2_data);
+        if (d_b2_mtx)  cudaFree(d_b2_mtx);
+        
         // destroy transpose descs if created
         if (transposeDesc) cublasLtMatrixTransformDescDestroy(transposeDesc);
         if (mlp_out_desc)  cublasLtMatrixLayoutDestroy(mlp_out_desc);
         if (res_in_desc)    cublasLtMatrixLayoutDestroy(res_in_desc);
-
-        // destroy cuBLASLt handle
-        cublasLtDestroy(ltHandle);
-
-        // destroy cuDNN handle (and subdescs if you own them fully here)
-        // NOTE: depending on ownership semantics of fused_desc members,
-        // you should destroy qDesc/kDesc/vDesc/oDesc, attnDrop, postDrop, attn, etc.
-        destroyCudnnDescriptors();
-
-        // destroy stream
-        cudaStreamDestroy(stream);
     }
-    
-
-    if (d_n1_bias)  cudaFree(d_n1_bias);
-    if (d_n1_scale) cudaFree(d_n1_scale);
-    if (d_n2_bias)  cudaFree(d_n2_bias);
-    if (d_n2_scale) cudaFree(d_n2_scale);
-
     if (h_q)  free(h_q);
     if (h_k)  free(h_k);
     if (h_v)  free(h_v);
@@ -460,13 +456,6 @@ GpuBlock::~GpuBlock() {
     if (h_kb) free(h_kb);
     if (h_vb) free(h_vb);
     if (h_pb) free(h_pb);
-
-    if (d_fc1)     cudaFree(d_fc1);
-    if (d_b1_data) cudaFree(d_b1_data);
-    if (d_b1_mtx)  cudaFree(d_b1_mtx);
-    if (d_fc2)     cudaFree(d_fc2);
-    if (d_b2_data) cudaFree(d_b2_data);
-    if (d_b2_mtx)  cudaFree(d_b2_mtx);
 
     // free host scratch
     if (h_debug_out) free(h_debug_out);
@@ -779,8 +768,12 @@ void GpuBlock::set_rand_scale(float _scale){
 }
 
 //Call this method to destroy the shared device pointer and descriptors between block, should be called before the destructor call.
+void GpuBlock::mark_shared_buffers(){
+    destroy_shared_buffers = true;
+}
+
 void GpuBlock::set_last_block(){
-    destroy_shared_elements = true;
+    destroy_shared_weights = true;
 }
 
 //Initialize the block descriptors 

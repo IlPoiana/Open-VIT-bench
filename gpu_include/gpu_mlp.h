@@ -11,12 +11,14 @@
 
 struct cublasLt_matmul_desc {
     cublasLtMatmulDesc_t matmulDesc;
-    cublasLtMatrixLayout_t xDesc;
+    cublasLtMatrixLayout_t xDesc; 
     cublasLtMatrixLayout_t fcDesc;
-    cublasLtMatrixLayout_t cDesc;
-    cublasLtMatrixLayout_t yDesc;
+    cublasLtMatrixLayout_t cDesc; 
+    cublasLtMatrixLayout_t yDesc; 
     float alpha;
     float beta;
+
+    void destroy_descriptors();
 };
 
 struct mlp_dimensions {
@@ -36,18 +38,25 @@ void create_mlp_descriptors(
     bool fused = true
 );
 
+//Create the descriptors for cublasLt matmul op
+void create_cublasLt_linlay_desc(
+    u_int B, u_int T, u_int C, u_int K,
+    cublasLt_matmul_desc & matmul
+);
 
-/**
- * @brief 
- *  
- * @param d_x: [B,T,C]
- * @param d_fc1: [C,K] ([T,C] in memory, transposed for the matmul)
- * @param d_h: [B,T,K]
- * @param d_b1 : [K]
- * @param d_fc2: [K,M] 
- * @param d_b2: [M]
- * @param d_y: [B,T,M]
- */
+//Returns the algorithm used in the cublasLt matmul
+cublasLtMatmulAlgo_t fetch_matmul_algos(cublasLtHandle_t &handle,cublasLt_matmul_desc &matmul, void ** d_workspace,  bool initialize_workspace = true);
+
+
+void strided_linear_layer(
+    cublasLtHandle_t & handle, cudaStream_t & stream,
+    u_int B, u_int T, u_int K, u_int stride_val,
+    cublasLt_matmul_desc &matmul,cublasLtMatmulAlgo_t &algo,void * d_workspace,
+    void * d_x, void * d_fc, void * d_b, 
+    void * d_y, bool gelu
+);
+
+
 void gpu_mlp(
     cublasLtHandle_t & handle, cudaStream_t & stream,
     u_int B, u_int T, u_int C, u_int K,u_int M,
@@ -78,6 +87,7 @@ void fused_gpu_mlp(
 );
 
 void bias_matrix(half * d_b, half * d_b_mtx, u_int row, u_int col);
+
 /*
 FUNCTIONS USED IN DEV PHASE
 */

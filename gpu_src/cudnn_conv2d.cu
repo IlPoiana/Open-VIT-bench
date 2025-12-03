@@ -83,6 +83,15 @@ convolution_desc::convolution_desc(
     d_workspace(d_workspace_), workspace_size(workspace_size_)
 {}
 
+void convolution_desc::destroy_descriptors(){
+    cudnnDestroyConvolutionDescriptor(conv_desc);
+    cudnnDestroyTensorDescriptor(x_desc);
+    cudnnDestroyTensorDescriptor(y_desc);
+    cudnnDestroyTensorDescriptor(bias_d.b_desc);
+    cudnnDestroyFilterDescriptor(w_desc);
+    cudnnDestroyActivationDescriptor(bias_d.act_desc);
+}
+
 convolution_bias_desc::convolution_bias_desc():
     b_desc(),
     act_desc()
