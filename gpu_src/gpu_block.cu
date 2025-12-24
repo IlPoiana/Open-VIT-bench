@@ -1,7 +1,20 @@
 #include "../gpu_include/gpu_block.h"
 
-//A method that initialize all the mlp and attention descriptors
-
+block_weights::block_weights(
+    half * _n1_bias , half * _n1_scale,
+    half * _n2_bias , half * _n2_scale,
+    half * _q , half * _k , half * _v , half * _p ,
+    half * _qb, half * _kb, half * _vb, half * _pb,
+    half * _fc1, half * _b1_data,
+    half * _fc2, half * _b2_data
+){
+    n1_bias = _n1_bias ; n1_scale = _n1_scale;
+    n2_bias = _n2_bias ; n2_scale = _n2_scale;
+    attn_w.d_q  = _q ; attn_w.d_k  = _k ; attn_w.d_v  = _v ; attn_w.d_o  = _p ;
+    attn_w.d_qb = _qb; attn_w.d_kb = _kb; attn_w.d_vb = _vb; attn_w.d_ob = _pb;
+    fc1 = _fc1; b1_data = _b1_data;
+    fc2 = _fc2; b2_data = _b2_data;
+}
 
 //One thread for each element
 __global__ void residual_test(half * d_x, half * d_y, u_int N){
@@ -36,30 +49,111 @@ __global__ void gpu_scale(half * d_x, half * d_y,u_int N, float scale){
     return;
 }
 
-GpuBlock::GpuBlock(GpuBlock &precedent_block):
-batch(precedent_block.batch), tokens(precedent_block.tokens), channels(precedent_block.channels), k_channels(precedent_block.k_channels),
-kernel_type(precedent_block.kernel_type), 
-epsilon(precedent_block.epsilon), scale(precedent_block.scale), num_heads(precedent_block.num_heads), rand_scale(precedent_block.get_rand_scale()),
-d_x(precedent_block.d_x), d_h(precedent_block.d_h), d_t(precedent_block.d_t), d_y(precedent_block.d_y)
-{
+GpuBlock& GpuBlock::operator=(GpuBlock&& other) noexcept{
+    batch      = other.batch     ;
+    tokens     = other.tokens    ;
+    channels   = other.channels  ;
+    k_channels = other.k_channels;
+
+    kernel_type = other.kernel_type;
+    scale     = other.scale    ; 
+    epsilon   = other.epsilon  ; 
+    num_heads = other.num_heads; 
+
+    d_x = other.d_x;
+    d_t = other.d_t;
+    d_y = other.d_y;
+    d_h = other.d_h;
+
+    d_n1_bias  = other.d_n1_bias ; 
+    d_n1_scale = other.d_n1_scale;
+    d_n2_bias  = other.d_n2_bias ;
+    d_n2_scale = other.d_n2_scale;
+
+    d_fc1     = other.d_fc1    ;
+    d_b1_data = other.d_b1_data;
+    d_b1_mtx  = other.d_b1_mtx ;
+    d_fc2     = other.d_fc2    ;
+    d_b2_data = other.d_b2_data;
+    d_b2_mtx  = other.d_b2_mtx ;
+
+    mlp_alpha = other.mlp_alpha;
+    mlp_beta = other.mlp_beta;
+
+    rand_scale = other.rand_scale;
+    input_elements_number  = other.input_elements_number ;
+    hidden_elements_number = other.hidden_elements_number;
+    destroy_shared_buffers = other.destroy_shared_buffers; 
+    destroy_shared_weights = other.destroy_shared_weights; 
+
     set_descriptors(
-        precedent_block.stream,
-        precedent_block.ltHandle,
-        precedent_block.cudnnHandle,
-        precedent_block.fused_desc,
-        precedent_block.matmul,
-        precedent_block.algo,
-        precedent_block.transposeDesc,
-        precedent_block.d_workspace_mlp,
-        precedent_block.mlp_out_desc,
-        precedent_block.res_in_desc
+        other.stream,
+        other.ltHandle,
+        other.cudnnHandle,
+        other.fused_desc,
+        other.matmul,
+        other.algo,
+        other.transposeDesc,
+        other.d_workspace_mlp,
+        other.mlp_out_desc,
+        other.res_in_desc
     );
 
-    // 1. Allocate main activation buffers on device
-    input_elements_number = batch * tokens * channels;
-    hidden_elements_number = batch * tokens * k_channels;
+    return *this;
+}
 
-    // 2. Attention variables
+GpuBlock::GpuBlock(GpuBlock&& other) noexcept{
+    batch      = other.batch     ;
+    tokens     = other.tokens    ;
+    channels   = other.channels  ;
+    k_channels = other.k_channels;
+
+    kernel_type = other.kernel_type;
+    scale     = other.scale    ; 
+    epsilon   = other.epsilon  ; 
+    num_heads = other.num_heads; 
+
+    d_x = other.d_x;
+    d_t = other.d_t;
+    d_y = other.d_y;
+    d_h = other.d_h;
+
+    d_n1_bias  = other.d_n1_bias ; 
+    d_n1_scale = other.d_n1_scale;
+    d_n2_bias  = other.d_n2_bias ;
+    d_n2_scale = other.d_n2_scale;
+
+    d_fc1     = other.d_fc1    ;
+    d_b1_data = other.d_b1_data;
+    d_b1_mtx  = other.d_b1_mtx ;
+    d_fc2     = other.d_fc2    ;
+    d_b2_data = other.d_b2_data;
+    d_b2_mtx  = other.d_b2_mtx ;
+
+    mlp_alpha = other.mlp_alpha;
+    mlp_beta = other.mlp_beta;
+
+    rand_scale = other.rand_scale;
+    input_elements_number  = other.input_elements_number ;
+    hidden_elements_number = other.hidden_elements_number;
+    destroy_shared_buffers = other.destroy_shared_buffers; 
+    destroy_shared_weights = other.destroy_shared_weights; 
+
+    set_descriptors(
+        other.stream,
+        other.ltHandle,
+        other.cudnnHandle,
+        other.fused_desc,
+        other.matmul,
+        other.algo,
+        other.transposeDesc,
+        other.d_workspace_mlp,
+        other.mlp_out_desc,
+        other.res_in_desc
+    );
+
+
+    // - host allocation
     h_q  = (float *)malloc(sizeof(float) * channels * channels);
     h_k  = (float *)malloc(sizeof(float) * channels * channels);
     h_v  = (float *)malloc(sizeof(float) * channels * channels);
@@ -69,33 +163,9 @@ d_x(precedent_block.d_x), d_h(precedent_block.d_h), d_t(precedent_block.d_t), d_
     h_vb = (float *)malloc(sizeof(float) * channels);
     h_pb = (float *)malloc(sizeof(float) * channels);
 
-    // 3. LayerNorm params
-    CUDA_CHECK(cudaMalloc(&d_n1_bias,  sizeof(half)*channels));
-    CUDA_CHECK(cudaMalloc(&d_n1_scale, sizeof(half)*channels));
-    CUDA_CHECK(cudaMalloc(&d_n2_bias,  sizeof(half)*channels));
-    CUDA_CHECK(cudaMalloc(&d_n2_scale, sizeof(half)*channels));
-
-    // 4. MLP weights/biases
-    size_t bytes_fc1 = sizeof(half)*k_channels*channels;
-    size_t bytes_fc2 = sizeof(half)*channels*k_channels;
-    size_t bytes_b1  = sizeof(half)*k_channels;
-    size_t bytes_b2  = sizeof(half)*channels;
-    size_t bytes_b1_mtx = sizeof(half)*hidden_elements_number;
-    size_t bytes_b2_mtx = sizeof(half)*input_elements_number;
-
-    CUDA_CHECK(cudaMalloc(&d_fc1,     bytes_fc1));
-    CUDA_CHECK(cudaMalloc(&d_b1_data, bytes_b1));
-    CUDA_CHECK(cudaMalloc(&d_fc2,     bytes_fc2));
-    CUDA_CHECK(cudaMalloc(&d_b2_data, bytes_b2));
-    if(kernel_type) {
-        CUDA_CHECK(cudaMalloc(&d_b1_mtx,  bytes_b1_mtx));
-        CUDA_CHECK(cudaMalloc(&d_b2_mtx,  bytes_b2_mtx));
-    }
-
-
-    // 5. host debug buffer for pulling results back
     h_debug_out = (half*)malloc(sizeof(half) * input_elements_number);
 }
+
 
 GpuBlock::GpuBlock(
     u_int B_, u_int T_, u_int C_, u_int K_,
@@ -124,10 +194,11 @@ GpuBlock::GpuBlock(
     size_t bytes_input = sizeof(half) * input_elements_number;
     size_t bytes_hidden  = sizeof(half) * hidden_elements_number;
 
-    CUDA_CHECK(cudaMalloc(&d_x, bytes_input));
-    CUDA_CHECK(cudaMalloc(&d_t, bytes_input));
-    CUDA_CHECK(cudaMalloc(&d_y, bytes_input));
-    CUDA_CHECK(cudaMalloc(&d_h, bytes_hidden));
+    CUDA_CHECK(cudaMalloc(&d_x, bytes_input));  CUDA_CHECK(cudaMemset(d_x, 0, bytes_input));
+    CUDA_CHECK(cudaMalloc(&d_t, bytes_input));  CUDA_CHECK(cudaMemset(d_t, 0, bytes_input));
+    CUDA_CHECK(cudaMalloc(&d_y, bytes_input));  CUDA_CHECK(cudaMemset(d_y, 0, bytes_input));
+    CUDA_CHECK(cudaMalloc(&d_h, bytes_hidden)); CUDA_CHECK(cudaMemset(d_h, 0, bytes_hidden));
+    
 
     // 5. Attention variables
     h_q  = (float *)malloc(sizeof(float) * channels * channels);
@@ -193,7 +264,9 @@ GpuBlock::GpuBlock(
     void * d_x_, void * d_h_, void * d_t_, void * d_y_,
     bool kernel_type_,
     double epsilon_, float scale_, int num_heads_,
-    float rand_scale_, bool initialize_descriptors
+    float rand_scale_, 
+    bool initialize_descriptors,
+    bool allocate_weights
 ): batch(B_), tokens(T_), channels(C_), k_channels(K_),
     d_x(d_x_), d_h(d_h_), d_t(d_t_), d_y(d_y_),
     kernel_type(kernel_type_), 
@@ -246,26 +319,28 @@ GpuBlock::GpuBlock(
     h_pb = (float *)malloc(sizeof(float) * channels);
 
     // 3. LayerNorm params
-    CUDA_CHECK(cudaMalloc(&d_n1_bias,  sizeof(half)*channels));
-    CUDA_CHECK(cudaMalloc(&d_n1_scale, sizeof(half)*channels));
-    CUDA_CHECK(cudaMalloc(&d_n2_bias,  sizeof(half)*channels));
-    CUDA_CHECK(cudaMalloc(&d_n2_scale, sizeof(half)*channels));
-
+    if(allocate_weights){
+        CUDA_CHECK(cudaMalloc(&d_n1_bias,  sizeof(half)*channels));
+        CUDA_CHECK(cudaMalloc(&d_n1_scale, sizeof(half)*channels));
+        CUDA_CHECK(cudaMalloc(&d_n2_bias,  sizeof(half)*channels));
+        CUDA_CHECK(cudaMalloc(&d_n2_scale, sizeof(half)*channels));
+    }
     // 4. MLP weights/biases
-    size_t bytes_fc1 = sizeof(half)*k_channels*channels;
-    size_t bytes_fc2 = sizeof(half)*channels*k_channels;
-    size_t bytes_b1  = sizeof(half)*k_channels;
-    size_t bytes_b2  = sizeof(half)*channels;
+    size_t bytes_fc1 = sizeof(half)*k_channels*channels;        
+    size_t bytes_fc2 = sizeof(half)*channels*k_channels;        
+    size_t bytes_b1  = sizeof(half)*k_channels;                 
+    size_t bytes_b2  = sizeof(half)*channels;                   
     size_t bytes_b1_mtx = sizeof(half)*hidden_elements_number;
     size_t bytes_b2_mtx = sizeof(half)*input_elements_number;
-
-    CUDA_CHECK(cudaMalloc(&d_fc1,     bytes_fc1));
-    CUDA_CHECK(cudaMalloc(&d_b1_data, bytes_b1));
-    CUDA_CHECK(cudaMalloc(&d_fc2,     bytes_fc2));
-    CUDA_CHECK(cudaMalloc(&d_b2_data, bytes_b2));
-    if(kernel_type) {
-        CUDA_CHECK(cudaMalloc(&d_b1_mtx,  bytes_b1_mtx));
-        CUDA_CHECK(cudaMalloc(&d_b2_mtx,  bytes_b2_mtx));
+    if(allocate_weights){
+        CUDA_CHECK(cudaMalloc(&d_fc1,     bytes_fc1));
+        CUDA_CHECK(cudaMalloc(&d_b1_data, bytes_b1));
+        CUDA_CHECK(cudaMalloc(&d_fc2,     bytes_fc2));
+        CUDA_CHECK(cudaMalloc(&d_b2_data, bytes_b2));
+        if(kernel_type) {
+            CUDA_CHECK(cudaMalloc(&d_b1_mtx,  bytes_b1_mtx));
+            CUDA_CHECK(cudaMalloc(&d_b2_mtx,  bytes_b2_mtx));
+        }
     }
 
 
@@ -418,52 +493,119 @@ epsilon(epsilon_), scale(scale_), num_heads(num_heads_), rand_scale(rand_scale_)
 
 }
 
+GpuBlock::GpuBlock(
+    cudaStream_t     &_stream,
+    cudnnHandle_t    &_cudnn_handle,
+    cublasLtHandle_t &_cublas_handle,
+    u_int B_, u_int T_, u_int C_, u_int K_,
+    bool kernel_type_,
+    double epsilon_, float scale_, int num_heads_,
+    bool initialize_descriptors,
+    bool allocate_weights
+): 
+    stream(_stream),
+    cudnnHandle(_cudnn_handle),
+    ltHandle(_cublas_handle),
+    batch(B_), tokens(T_), channels(C_), k_channels(K_),
+    kernel_type(kernel_type_), 
+    epsilon(epsilon_), scale(scale_), num_heads(num_heads_)
+{
+    // 0. Initialize all the descriptors
+    assert(k_channels % num_heads == 0);
+    if(initialize_descriptors){
+        // 0.1 cuBLASLt MLP descriptors
+        mlp_dimensions mdim(batch, tokens, channels, k_channels, channels);
+        CUDA_CHECK(cudaMallocAsync(&d_workspace_mlp, (size_t)MLP_WORKSPACE_SIZE, stream));
+        create_mlp_descriptors(ltHandle, matmul, d_workspace_mlp, algo, mdim, kernel_type);
+    
+
+        // 0.2 Optional transpose descriptors if kernel_type == true (like your code)
+        if (kernel_type) {
+            cublasOperation_t op = CUBLAS_OP_T;
+
+            CUBLAS_CHECK(cublasLtMatrixTransformDescCreate(&transposeDesc, CUDA_R_32F));
+            CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&mlp_out_desc, CUDA_R_16F, /*rows*/batch*tokens, /*cols*/channels, /*ld*/batch*tokens));
+            CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&res_in_desc, CUDA_R_16F, /*rows*/channels, /*cols*/batch*tokens, /*ld*/channels));
+            CUBLAS_CHECK(cublasLtMatrixTransformDescSetAttribute(
+                transposeDesc, CUBLASLT_MATRIX_TRANSFORM_DESC_TRANSA, &op, sizeof(op)
+            ));
+        }
+    }
+
+    // 1. Allocate main activation buffers on device
+    input_elements_number = batch * tokens * channels;
+    hidden_elements_number = batch * tokens * k_channels;
+
+    // 2. Attention variables
+    h_q  = (float *)malloc(sizeof(float) * channels * channels);
+    h_k  = (float *)malloc(sizeof(float) * channels * channels);
+    h_v  = (float *)malloc(sizeof(float) * channels * channels);
+    h_p  = (float *)malloc(sizeof(float) * channels * channels);
+    h_qb = (float *)malloc(sizeof(float) * channels);
+    h_kb = (float *)malloc(sizeof(float) * channels);
+    h_vb = (float *)malloc(sizeof(float) * channels);
+    h_pb = (float *)malloc(sizeof(float) * channels);
+
+    // 3. LayerNorm params
+    if(allocate_weights){
+        CUDA_CHECK(cudaMallocAsync(&d_n1_bias,  sizeof(half)*channels, stream));
+        CUDA_CHECK(cudaMallocAsync(&d_n1_scale, sizeof(half)*channels, stream));
+        CUDA_CHECK(cudaMallocAsync(&d_n2_bias,  sizeof(half)*channels, stream));
+        CUDA_CHECK(cudaMallocAsync(&d_n2_scale, sizeof(half)*channels, stream));
+    }
+    // 4. MLP weights/biases
+    if(allocate_weights){
+
+        size_t bytes_fc1 = sizeof(half)*k_channels*channels;
+        size_t bytes_fc2 = sizeof(half)*channels*k_channels;
+        size_t bytes_b1  = sizeof(half)*k_channels;
+        size_t bytes_b2  = sizeof(half)*channels;
+        size_t bytes_b1_mtx = sizeof(half)*hidden_elements_number;
+        size_t bytes_b2_mtx = sizeof(half)*input_elements_number;
+
+        CUDA_CHECK(cudaMallocAsync(&d_fc1,     bytes_fc1, stream));
+        CUDA_CHECK(cudaMallocAsync(&d_b1_data, bytes_b1 , stream));
+        CUDA_CHECK(cudaMallocAsync(&d_fc2,     bytes_fc2, stream));
+        CUDA_CHECK(cudaMallocAsync(&d_b2_data, bytes_b2 , stream));
+        if(kernel_type) {
+            CUDA_CHECK(cudaMallocAsync(&d_b1_mtx,  bytes_b1_mtx, stream));
+            CUDA_CHECK(cudaMallocAsync(&d_b2_mtx,  bytes_b2_mtx, stream));
+        }
+    }
+
+    // 5. host debug buffer for pulling results back
+    h_debug_out = (half*)malloc(sizeof(half) * input_elements_number);
+
+}
+
 // ---- dtor ----
 GpuBlock::~GpuBlock() {
-    cout << "destructor called!" << endl;
+    // cout << "destructor called!" << endl;
     if(destroy_shared_buffers){
-        // free device buffers
-        if (d_x)        cudaFree(d_x);
-        if (d_t)        cudaFree(d_t);
-        if (d_y)        cudaFree(d_y);
-        if (d_h)        cudaFree(d_h);
-        if (d_workspace_mlp) cudaFree(d_workspace_mlp);
+        free_buffers();
     }
     
     if(destroy_shared_weights){
-        if (d_n1_bias)  cudaFree(d_n1_bias);
-        if (d_n1_scale) cudaFree(d_n1_scale);
-        if (d_n2_bias)  cudaFree(d_n2_bias);
-        if (d_n2_scale) cudaFree(d_n2_scale);
-        
-        if (d_fc1)     cudaFree(d_fc1);
-        if (d_b1_data) cudaFree(d_b1_data);
-        if (d_b1_mtx)  cudaFree(d_b1_mtx);
-        if (d_fc2)     cudaFree(d_fc2);
-        if (d_b2_data) cudaFree(d_b2_data);
-        if (d_b2_mtx)  cudaFree(d_b2_mtx);
-        
-        // destroy transpose descs if created
-        if (transposeDesc) cublasLtMatrixTransformDescDestroy(transposeDesc);
-        if (mlp_out_desc)  cublasLtMatrixLayoutDestroy(mlp_out_desc);
-        if (res_in_desc)    cublasLtMatrixLayoutDestroy(res_in_desc);
+        free_weights();
     }
-    if (h_q)  free(h_q);
-    if (h_k)  free(h_k);
-    if (h_v)  free(h_v);
-    if (h_p)  free(h_p);
-    if (h_qb) free(h_qb);
-    if (h_kb) free(h_kb);
-    if (h_vb) free(h_vb);
-    if (h_pb) free(h_pb);
-
-    // free host scratch
-    if (h_debug_out) free(h_debug_out);
+    free_host_buffers();
 }
 
+void GpuBlock::free_host_buffers(){
+    free(h_q);
+    free(h_k);
+    free(h_v);
+    free(h_p);
+    free(h_qb);
+    free(h_kb);
+    free(h_vb);
+    free(h_pb);
 
+    // free host scratch
+    free(h_debug_out);
+}
 
-void GpuBlock::init_attn_descriptor(){
+void GpuBlock::init_attn_descriptor(bool load_attn_weights){
     vector<half> 
         q_half(channels*channels,0),
         k_half(channels*channels,0),
@@ -495,7 +637,8 @@ void GpuBlock::init_attn_descriptor(){
         h_attn_weights,
         adim,
         fused_desc,
-        num_heads
+        num_heads,
+        load_attn_weights
     );
 }
 
@@ -516,6 +659,117 @@ void GpuBlock::init_attn_descriptor(
 
     this->init_attn_descriptor();
 }
+
+void GpuBlock::init_descriptors(){
+    // -Attention
+    attn_dimensions_gpu adim(batch,tokens,channels,channels);
+    fused_desc.hiWin = std::vector<int>(tokens, 0);
+    attn_data_gpu<half> h_attn_weights; //not used in this function
+
+    initialize_attn_descriptors(
+        cudnnHandle,
+        h_attn_weights,
+        adim,
+        fused_desc,
+        num_heads,
+        false
+    );
+
+    // - MLP 
+    mlp_dimensions mdim(batch, tokens, channels, k_channels, channels);
+    if(d_workspace_mlp == nullptr)
+        CUDA_CHECK(cudaMallocAsync(&d_workspace_mlp, (size_t)MLP_WORKSPACE_SIZE, stream));
+    create_mlp_descriptors(ltHandle, matmul, d_workspace_mlp, algo, mdim, kernel_type);
+
+
+    // - Optional transpose descriptors if kernel_type == true
+    if (kernel_type) {
+        cublasOperation_t op = CUBLAS_OP_T;
+
+        CUBLAS_CHECK(cublasLtMatrixTransformDescCreate(&transposeDesc, CUDA_R_32F));
+        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&mlp_out_desc, CUDA_R_16F, /*rows*/batch*tokens, /*cols*/channels, /*ld*/batch*tokens));
+        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&res_in_desc, CUDA_R_16F, /*rows*/channels, /*cols*/batch*tokens, /*ld*/channels));
+        CUBLAS_CHECK(cublasLtMatrixTransformDescSetAttribute(
+            transposeDesc, CUBLASLT_MATRIX_TRANSFORM_DESC_TRANSA, &op, sizeof(op)
+        ));
+    }
+}
+
+void GpuBlock::destroy_descriptors(bool weights, bool workspace){
+    matmul[0].destroy_descriptors();
+    matmul[1].destroy_descriptors();
+    fused_desc.destroy_descriptors(weights, workspace);
+}
+
+
+
+void GpuBlock::allocate_weights(){
+    size_t bytes_fc1 = sizeof(half)*k_channels*channels;        
+    size_t bytes_fc2 = sizeof(half)*channels*k_channels;        
+    size_t bytes_b1  = sizeof(half)*k_channels;                 
+    size_t bytes_b2  = sizeof(half)*channels;                   
+    size_t bytes_b1_mtx = sizeof(half)*hidden_elements_number;
+    size_t bytes_b2_mtx = sizeof(half)*input_elements_number;
+
+    cudaMallocAsync(&d_n1_bias ,sizeof(half) *  channels, stream);
+    cudaMallocAsync(&d_n1_scale,sizeof(half) *  channels, stream);
+    cudaMallocAsync(&d_n2_bias ,sizeof(half) *  channels, stream);
+    cudaMallocAsync(&d_n2_scale,sizeof(half) *  channels, stream);
+    cudaMallocAsync(&d_fc1     ,bytes_fc1, stream);
+    cudaMallocAsync(&d_b1_data ,bytes_b1, stream);
+    cudaMallocAsync(&d_fc2     ,bytes_fc2, stream);
+    cudaMallocAsync(&d_b2_data ,bytes_b2, stream);
+    if(kernel_type){
+        cudaMallocAsync(&d_b1_mtx, bytes_b1_mtx, stream);
+        cudaMallocAsync(&d_b2_mtx, bytes_b2_mtx, stream);
+    }
+
+    allocate_attn_weights(cudnnHandle, stream, fused_desc);
+}
+
+void GpuBlock::load_weights(
+    half * _n1b_data, half * _n1g_data,
+    half * _n2b_data, half * _n2g_data,
+    half * _A1_data, half * _b1_data,
+    half * _A2_data, half * _b2_data,
+    attn_data_gpu<half> attn_w
+){
+    //Memcpy all the device vectors (layer norm and mlp)
+    CUDA_CHECK(cudaMemcpyAsync(d_n1_scale, _n1g_data, sizeof(half) * channels,cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyAsync(d_n1_bias , _n1b_data, sizeof(half) * channels,cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyAsync(d_n2_scale, _n2g_data, sizeof(half) * channels,cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyAsync(d_n2_bias , _n2b_data, sizeof(half) * channels,cudaMemcpyHostToDevice, stream));
+
+    CUDA_CHECK(cudaMemcpyAsync(d_fc1     , _A1_data,sizeof(half) * channels * k_channels, cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyAsync(d_fc2     , _A2_data,sizeof(half) * channels * k_channels, cudaMemcpyHostToDevice, stream));
+    
+    if(kernel_type){
+        vector<half> b1_half_mtx(hidden_elements_number);
+        vector<half> b2_half_mtx(input_elements_number);
+
+        bias_matrix(_b1_data,b1_half_mtx.data(),k_channels, batch * tokens);
+        bias_matrix(_b2_data,b2_half_mtx.data(),channels, batch * tokens);
+
+        CUDA_CHECK(cudaMemcpyAsync(d_b1_mtx , b1_half_mtx.data(),sizeof(half) * hidden_elements_number, cudaMemcpyHostToDevice, stream));
+        CUDA_CHECK(cudaMemcpyAsync(d_b2_mtx , b2_half_mtx.data(),sizeof(half) * input_elements_number, cudaMemcpyHostToDevice, stream));
+    }
+    else{
+        CUDA_CHECK(cudaMemcpyAsync(d_b1_data , _b1_data,sizeof(half) * k_channels, cudaMemcpyHostToDevice, stream));
+        CUDA_CHECK(cudaMemcpyAsync(d_b2_data , _b2_data,sizeof(half) * channels, cudaMemcpyHostToDevice, stream));
+    }
+
+    attn_dimensions_gpu attn_dim(batch,tokens,channels, channels);
+
+    load_attn_weights(
+        cudnnHandle,
+        stream,
+        attn_w,
+        attn_dim,
+        fused_desc
+    );
+}
+
+
 
 void GpuBlock::random_data(bool attn_init, bool input){
     cout << "ln" << endl;
@@ -580,6 +834,21 @@ void GpuBlock::forward(bool debug, u_int tokens_per_block){
     //-Layer Norm    
     cub_single_layer_norm<<<ln_blocks_n,channels,0,stream>>>((half *)d_x, (half *)d_y,(half *)d_n1_scale, (half *)d_n1_bias, gpu_epsilon, tokens_per_block);
     
+    /*TO REMOVE*/
+    // {
+    //     cudaMemcpyAsync(h_debug_out, d_n2_scale, sizeof(half) * channels,cudaMemcpyDeviceToHost,stream);
+    //     cudaStreamSynchronize(stream);
+    //     float * f_debug = (float *)calloc(channels,sizeof(float));
+    //     f16_to_f32(h_debug_out, f_debug, channels);
+    //     RowVector y(f_debug, channels);
+    //     cout << "ln2 scale after ln1" << endl; y.print();
+    //     cudaMemcpyAsync(h_debug_out, d_n2_bias, sizeof(half) * channels,cudaMemcpyDeviceToHost,stream);
+    //     cudaStreamSynchronize(stream);
+    //     f16_to_f32(h_debug_out, f_debug, channels);
+    //     RowVector y2(f_debug, channels);
+    //     cout << "ln2 bias after ln1" << endl; y2.print();
+    // }//----
+
     if(debug) {cout << "ln1" << endl; print_debug();}
     //-Attention
     attention_device( 
@@ -587,7 +856,30 @@ void GpuBlock::forward(bool debug, u_int tokens_per_block){
         d_y, d_t,
         fused_desc
     );
+     /*TO REMOVE
+    // cout << "ELEMENTS CHECK" << endl;
+    // cout << input_elements_number << endl;
+    // cout << "d_x "<< d_x << endl;
+    // cout << "d_t "<< d_t << endl;
+    // cout << "d_h "<< d_h << endl;
+    // cout << "d_y "<< d_y << endl;
+    */
     if(debug) {cout << "attn" << endl; print_debug();}
+
+    /*TO REMOVE*/
+    // {
+    //     cudaMemcpyAsync(h_debug_out, d_n2_scale, sizeof(half) * channels,cudaMemcpyDeviceToHost,stream);
+    //     cudaStreamSynchronize(stream);
+    //     float * f_debug = (float *)calloc(channels,sizeof(float));
+    //     f16_to_f32(h_debug_out, f_debug, channels);
+    //     RowVector y(f_debug, channels);
+    //     cout << "ln2 scale after attn" << endl; y.print();
+    //     cudaMemcpyAsync(h_debug_out, d_n2_bias, sizeof(half) * channels,cudaMemcpyDeviceToHost,stream);
+    //     cudaStreamSynchronize(stream);
+    //     f16_to_f32(h_debug_out, f_debug, channels);
+    //     RowVector y2(f_debug, channels);
+    //     cout << "ln2 bias after attn" << endl; y2.print();
+    // }//----
 
     //-Residual
     residual_strided<<<tokens,channels,0,stream>>>((half*)d_t,(half*)d_x, input_elements_number, scale);
@@ -665,6 +957,23 @@ void GpuBlock::forward(half * h_x, bool debug, u_int tokens_per_block){
 }
 
 // ---- Setters ----
+
+void GpuBlock::set_buffers(
+    void * _d_x,      
+    void * _d_t,      
+    void * _d_y,      
+    void * _d_h,  
+    void * _d_workspace_mlp  
+){
+    d_x = _d_x;
+    d_t = _d_t;
+    d_y = _d_y;
+    d_h = _d_h;
+    assert(d_workspace_mlp == nullptr);
+    d_workspace_mlp = _d_workspace_mlp;
+    fused_desc.dWork = _d_workspace_mlp;
+    fused_desc.workBytes = WORKSPACE_SIZE;
+}
 
 /*
 Copy on the host device the block weights, converting to half
@@ -772,8 +1081,43 @@ void GpuBlock::mark_shared_buffers(){
     destroy_shared_buffers = true;
 }
 
-void GpuBlock::set_last_block(){
+void GpuBlock::mark_shared_weights(){
     destroy_shared_weights = true;
+}
+
+
+
+//Call this method to destroy the shared device pointer and descriptors between block, should be called before the destructor call.
+void GpuBlock::free_buffers(){
+    cudaFree(d_x);
+    cudaFree(d_t);
+    cudaFree(d_y);
+    cudaFree(d_h);
+    cudaFree(d_workspace_mlp);
+    destroy_shared_buffers = false;
+}
+
+void GpuBlock::free_weights(){
+    CUDA_CHECK(cudaFree(d_n1_bias) );
+    CUDA_CHECK(cudaFree(d_n1_scale));
+    CUDA_CHECK(cudaFree(d_n2_bias) );
+    CUDA_CHECK(cudaFree(d_n2_scale));
+    
+    CUDA_CHECK(cudaFree(d_fc1)    );
+    CUDA_CHECK(cudaFree(d_b1_data));
+    CUDA_CHECK(cudaFree(d_b1_mtx) );
+    CUDA_CHECK(cudaFree(d_fc2)    );
+    CUDA_CHECK(cudaFree(d_b2_data));
+    CUDA_CHECK(cudaFree(d_b2_mtx) );
+    
+    // destroy transpose descs if created
+    if (transposeDesc) cublasLtMatrixTransformDescDestroy(transposeDesc);
+    if (mlp_out_desc)  cublasLtMatrixLayoutDestroy(mlp_out_desc);
+    if (res_in_desc)   cublasLtMatrixLayoutDestroy(res_in_desc);
+
+    CUDA_CHECK(cudaFree(fused_desc.dWeights));
+
+    destroy_shared_weights = false;
 }
 
 //Initialize the block descriptors 
@@ -825,6 +1169,11 @@ void GpuBlock::get_descriptors(
 float GpuBlock::get_rand_scale(){
     return rand_scale;
 }
+
+u_int GpuBlock::get_hidden_elements_number(){
+    return hidden_elements_number;
+}
+
 
 void GpuBlock::to_CPU(Block &cpu_block, bool debug){
     //Convert the device weights to float host
@@ -1026,44 +1375,26 @@ void GpuBlock::print_debug(){
     half * h_h_half = (half *)malloc(hidden_elements_number * sizeof(half));
 
 
-    cudaMemcpy(h_xty_half, d_x, sizeof(half) * input_elements_number, cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(h_xty_half, d_x, sizeof(half) * input_elements_number, cudaMemcpyDeviceToHost));
     f16_to_f32(h_xty_half, h_xty_gpu, input_elements_number);
     Tensor out_x(h_xty_gpu,input_elements_number,batch, tokens, channels);
     cout << "d_x | ";out_x.print();
 
-    cudaMemcpy(h_xty_half, d_t, sizeof(half) * input_elements_number, cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(h_xty_half, d_t, sizeof(half) * input_elements_number, cudaMemcpyDeviceToHost));
     f16_to_f32(h_xty_half, h_xty_gpu, input_elements_number);
     Tensor out_t(h_xty_gpu,input_elements_number,batch, tokens, channels);
     cout << "d_t | ";out_t.print();
 
-    cudaMemcpy(h_h_half, d_h, sizeof(half) * hidden_elements_number, cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(h_h_half, d_h, sizeof(half) * hidden_elements_number, cudaMemcpyDeviceToHost));
     f16_to_f32(h_h_half, h_h_gpu, hidden_elements_number);
-    Tensor out_h(h_xty_gpu,hidden_elements_number,batch, tokens, k_channels);
+    Tensor out_h(h_h_gpu, hidden_elements_number,batch, tokens, k_channels);
     cout << "d_h | ";out_h.print();
 
-    cudaMemcpy(h_xty_half, d_y, sizeof(half) * input_elements_number, cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(h_xty_half, d_y, sizeof(half) * input_elements_number, cudaMemcpyDeviceToHost));
     f16_to_f32(h_xty_half, h_xty_gpu, input_elements_number);
     Tensor out_y(h_xty_gpu,input_elements_number,batch, tokens, channels);
     cout << "d_y | ";out_y.print();
 
-}
-
-void GpuBlock::destroyCudnnDescriptors() {
-    // Only destroy what we created.
-    // We assume fused_desc owns these.
-    if (fused_desc.qDesc)    cudnnDestroySeqDataDescriptor(fused_desc.qDesc);
-    if (fused_desc.kDesc)    cudnnDestroySeqDataDescriptor(fused_desc.kDesc);
-    if (fused_desc.vDesc)    cudnnDestroySeqDataDescriptor(fused_desc.vDesc);
-    if (fused_desc.oDesc)    cudnnDestroySeqDataDescriptor(fused_desc.oDesc);
-
-    if (fused_desc.attnDrop) cudnnDestroyDropoutDescriptor(fused_desc.attnDrop);
-    if (fused_desc.postDrop) cudnnDestroyDropoutDescriptor(fused_desc.postDrop);
-    if (fused_desc.attn)     cudnnDestroyAttnDescriptor(fused_desc.attn);
-
-    if (fused_desc.dLenQO)   cudaFree(fused_desc.dLenQO);
-    if (fused_desc.dLenKV)   cudaFree(fused_desc.dLenKV);
-    if (fused_desc.dWeights) cudaFree(fused_desc.dWeights);
-    if (fused_desc.dWork)    cudaFree(fused_desc.dWork);
 }
 
 //Transpose a square channels X channels mtx from float to half 

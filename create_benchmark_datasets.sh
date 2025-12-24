@@ -1,6 +1,7 @@
 # Grid benchmark datasets creation
 BATCHES=(1 2 4 8 16 32 64 128 256)
-IMG_SIZES=(64 128 224 512)
+# IMG_SIZES=(64 128 224 512)
+IMG_SIZES=(224)
 
 # BATCHES=(1 2)
 # IMG_SIZES=(64 128)

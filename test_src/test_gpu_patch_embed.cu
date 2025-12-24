@@ -467,9 +467,7 @@ void gpu_comparison(bool debug){
 
     cudaStreamSynchronize(stream);
     gpu_pe.load_weights_data(gpu_conv_weights, gpu_bias, gpu_pos_emb, false);
-    cudaStreamSynchronize(stream); /*Need to sync cause every op is async*/
     gpu_pe.load_pics(gpu_pic);
-    cudaStreamSynchronize(stream); 
     gpu_pe.forward(gpu_out, false, debug); //Copying on host directly
     cudaStreamSynchronize(stream);
     if(debug) {

@@ -258,15 +258,22 @@ void init_conv2d_descriptors(
     }
 
     // 8. Fetch the workspace size and allocate it 
+    size_t fetched_w_size = 0;
     CUDNN_CHECK(
         cudnnGetConvolutionForwardWorkspaceSize(
             desc.handle,
             desc.x_desc, desc.w_desc, desc.conv_desc, desc.y_desc,
             desc.algo, 
-            &desc.workspace_size
+            &fetched_w_size
         )
     )
-    CUDA_CHECK(cudaMalloc(&desc.d_workspace, desc.workspace_size));
+    if(desc.d_workspace == nullptr){
+        desc.workspace_size = fetched_w_size;
+        CUDA_CHECK(cudaMalloc(&desc.d_workspace, desc.workspace_size));
+    }
+    else{
+        assert(fetched_w_size < desc.workspace_size);
+    }
 
     int y_b, y_c, y_h, y_w;
     CUDNN_CHECK(

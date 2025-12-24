@@ -1,137 +1,442 @@
 // #include "../gpu_include/cuda_utils.h"
 #include "../gpu_include/gpu_vit.h"
 
+void transpose_out_of_place(const float * in, half* out, std::size_t rows, std::size_t cols) {
+    for (std::size_t i = 0; i < rows; ++i) {
+        const float* Ai = in + i * cols;
+        for (std::size_t j = 0; j < cols; ++j) {
+            out[j * rows + i] = Ai[j];
+        }
+    }
+}
 
-// Prepare the ViT in GPU memory and the cudaGraph (missing only the input image)
-GpuViT::GpuViT(VisionTransformer & vit)
+patch_emb_weights convert_patch_emb(VisionTransformer &cpu_vit){
+    
+    vit_size img_height, img_width;
+    cpu_vit.get_img_size(img_height, img_width);
+    int conv_kernel_shape[6];
+    cpu_vit.get_kernel_shape(conv_kernel_shape);
+    int channels = conv_kernel_shape[0], 
+    embeddings = conv_kernel_shape[1],
+    Ho = conv_kernel_shape[2],
+    Wo = conv_kernel_shape[3];
+    assert((img_height % Ho == 0) && (img_width % Wo == 0));
+    int tokens = (img_height / Ho) * (img_width / Wo);
+
+    half * half_conv_w =(half*)malloc(sizeof(half) * channels * embeddings * Ho * Wo);
+    half * half_bias =(half*)malloc(sizeof(half) * embeddings);
+    half * half_pos_emb =(half*)malloc(sizeof(half) * embeddings * (tokens + 1));
+
+    f32_to_f16(
+        cpu_vit.get_conv2d_kernel(),
+        half_conv_w,
+        channels * embeddings * Ho * Wo
+    );
+    f32_to_f16(
+        cpu_vit.get_conv2d_bias(),
+        half_bias,
+        embeddings
+    );
+    f32_to_f16(
+        cpu_vit.get_pos_embed(),
+        half_pos_emb,
+        embeddings * (tokens + 1)
+    );
+    
+    return patch_emb_weights(half_conv_w, half_bias, half_pos_emb);
+
+}
+
+void convert_blocks( VisionTransformer &cpu_vit, vector<block_weights> &out){
+    vector<blocks_data> blocks = cpu_vit.get_blocks();
+    vector<blocks_shape> b_shape = cpu_vit.get_blocks_shape();
+    vit_size depth = cpu_vit.get_depth();
+    layer_shape norm_dim = b_shape[0].norm1_shape;
+    linear_shape fc1_dim = b_shape[0].mlperc_shape.fc1_shape;
+    attn_shape attn_dim = b_shape[0].attention_shape;
+    int embeddings = norm_dim.bias_size; 
+    int k_embeddings = fc1_dim.a_row; //should be in col major the weight mtx, so the rows of it are the output dimensions
+    
+    vector<block_weights> blk_w; blk_w.reserve(depth);
+    
+    for(int i = 0; i< depth; i++){
+        // - init half weights vectors
+        half * n1_bias  = (half *)malloc(sizeof(half) * embeddings);
+        half * n1_scale = (half *)malloc(sizeof(half) * embeddings);
+        half * n2_bias  = (half *)malloc(sizeof(half) * embeddings);
+        half * n2_scale = (half *)malloc(sizeof(half) * embeddings);
+    
+        half * q =(half *)malloc(sizeof(half) * embeddings * embeddings); 
+        half * k =(half *)malloc(sizeof(half) * embeddings * embeddings);
+        half * v =(half *)malloc(sizeof(half) * embeddings * embeddings);
+        half * p =(half *)malloc(sizeof(half) * embeddings * embeddings);
+        half * qb =(half *)malloc(sizeof(half) * embeddings);
+        half * kb =(half *)malloc(sizeof(half) * embeddings);
+        half * vb =(half *)malloc(sizeof(half) * embeddings);
+        half * pb =(half *)malloc(sizeof(half) * embeddings);
+
+        half * fc1     = (half *)malloc(sizeof(half) * embeddings * k_embeddings);
+        half * b1_data = (half *)malloc(sizeof(half) * k_embeddings);
+        half * fc2     = (half *)malloc(sizeof(half) * embeddings * k_embeddings);
+        half * b2_data = (half *)malloc(sizeof(half) * embeddings);
+
+        // - copy from cpu
+        f32_to_f16(blocks[i].norm1.bias, n1_bias , embeddings);
+        f32_to_f16(blocks[i].norm1.g, n1_scale, embeddings);
+        f32_to_f16(blocks[i].norm2.bias, n2_bias , embeddings);
+        f32_to_f16(blocks[i].norm2.g, n2_scale, embeddings);
+
+        f32_to_f16(blocks[i].attention.q_gen.A, q , embeddings * embeddings);
+        f32_to_f16(blocks[i].attention.k_gen.A, k , embeddings * embeddings);
+        f32_to_f16(blocks[i].attention.v_gen.A, v , embeddings * embeddings);
+        f32_to_f16(blocks[i].attention.proj.A, p , embeddings * embeddings);
+        f32_to_f16(blocks[i].attention.q_gen.b, qb, embeddings);
+        f32_to_f16(blocks[i].attention.k_gen.b, kb, embeddings);
+        f32_to_f16(blocks[i].attention.v_gen.b, vb, embeddings);
+        f32_to_f16(blocks[i].attention.proj.b, pb, embeddings);
+        transpose_out_of_place(blocks[i].attention.q_gen.A, q, embeddings, embeddings);
+        transpose_out_of_place(blocks[i].attention.k_gen.A, k, embeddings, embeddings);
+        transpose_out_of_place(blocks[i].attention.v_gen.A, v, embeddings, embeddings);
+        transpose_out_of_place(blocks[i].attention.proj.A,  p, embeddings, embeddings);
+
+        f32_to_f16(blocks[i].mlp.fc1.A, fc1    , embeddings * k_embeddings);
+        f32_to_f16(blocks[i].mlp.fc1.b, b1_data, k_embeddings);
+        f32_to_f16(blocks[i].mlp.fc2.A, fc2    , embeddings * k_embeddings);
+        f32_to_f16(blocks[i].mlp.fc2.b, b2_data, embeddings );
+
+        blk_w.emplace_back(
+            n1_bias, n1_scale,
+            n2_bias, n2_scale,
+            q ,
+            k ,
+            v ,
+            p ,
+            qb,
+            kb,
+            vb,
+            pb,
+            fc1    ,
+            b1_data,
+            fc2    ,
+            b2_data
+        );
+    }
+
+    out = std::move(blk_w);
+}
+
+pred_head_weights convert_pred_head(VisionTransformer &cpu_vit){
+    linear_data lin_head = cpu_vit.get_head();
+    layer_data ln = cpu_vit.get_norm();
+    int embeddings = cpu_vit.get_embed_dim(); 
+    int class_num = cpu_vit.get_num_classes();
+
+    half * ln_scale    = (half *)malloc(sizeof(half) * embeddings);
+    half * ln_bias     = (half *)malloc(sizeof(half) * embeddings);
+    half * head_weights= (half *)malloc(sizeof(half) * embeddings * class_num);
+    half * head_bias   = (half *)malloc(sizeof(half) * class_num);
+
+
+    f32_to_f16(ln.g, ln_scale    , embeddings);
+    f32_to_f16(ln.bias, ln_bias     , embeddings);
+    f32_to_f16(lin_head.A, head_weights, embeddings * class_num);
+    f32_to_f16(lin_head.b, head_bias   , class_num);
+
+    return pred_head_weights(
+        ln_scale,
+        ln_bias,
+        head_weights,
+        head_bias
+    );
+}
+
+void convert_vit_weights(
+    VisionTransformer &vit,
+    patch_emb_weights &pe_w,
+    vector<block_weights> &blk_w,
+    pred_head_weights &ph_w
+){
+    // - patch embedder
+    pe_w = convert_patch_emb(vit);
+
+    // - encoder blocks
+    convert_blocks(vit, blk_w);
+
+    
+    // - prediction head
+    ph_w = convert_pred_head(vit);
+}
+
+void GpuVit::set_class_buffers(){
+    pe.set_buffers(
+        d_pic,
+        d_y,
+        d_x,
+        d_t,
+        d_workspace
+    );
+    for(int i = 0; i < depth; i++){
+        blocks[i].set_buffers(
+            d_x,
+            d_t,
+            d_y,
+            d_h,
+            d_workspace
+        );
+    }
+    ph.set_shared_buffers(
+        d_x,
+        d_t,
+        d_y,
+        d_x,
+        d_workspace
+    );
+
+}
+
+/**
+ * @brief 
+ * 
+ */
+GpuVit::GpuVit(
+    cudaStream_t     &_stream,
+    cudnnHandle_t    &_cudnn_handle,
+    cublasLtHandle_t &_cublas_handle,
+
+    convolution_dim _conv_dim,
+
+    vit_size _tokens ,
+    vit_size _num_classes ,
+    vit_size _depth ,
+    vit_size _num_heads ,
+    vit_float _scale_val ,
+    vit_size mlp_hidden ,
+
+    vit_bool init_pe_descriptors,
+    vit_bool allocate_pe_shared_ptrs, //initialize the weights shared pointers
+
+    vit_bool block_mlp_kernel_type,
+    vit_bool init_block_descriptors,
+    vit_bool allocate_blocks_shared_ptrs //initialize the weights shared pointers
+):
+    stream       (_stream),
+    cudnn_handle (_cudnn_handle),
+    cublas_handle(_cublas_handle),
+    conv_dim(_conv_dim),
+    batch     (_conv_dim.batch ),
+    img_h     (_conv_dim.height ),
+    img_w     (_conv_dim.width ),
+    patch_h   (_conv_dim.Ho ),
+    patch_w   (_conv_dim.Wo ),
+    channels  (_conv_dim.channels ),
+    embeddings(_conv_dim.embeddings),
+
+    num_classes(_num_classes),
+    depth      (_depth),
+    num_heads(_num_heads),
+    scale_val(_scale_val),
+
+    
+    pe(
+        _stream, _cudnn_handle, _conv_dim,
+        allocate_pe_shared_ptrs, 
+        init_pe_descriptors,
+        allocate_pe_shared_ptrs
+    ),
+    blocks(),
+    ph(
+        _conv_dim.batch, _tokens + 1, _conv_dim.embeddings, _num_classes,
+        _cudnn_handle, _cublas_handle, _stream
+    )
+
+
 {
-    //Could be, call a function that initialize the tensors and creates the cudaGraph?
-    // vit_float * get_conv2d_kernel();
-    // vit_float * get_conv2d_bias();
-    // void get_kernel_shape(int kernel_shape[6]);
-    // layer_data get_patch_layer_norm();
-    // layer_shape get_patch_layer_shape();
+    assert((img_h % patch_h == 0) && (img_w % patch_w == 0));
+    tokens = (img_h / patch_h) * (img_w / patch_w);
+    assert(tokens == _tokens);
+    // blocks
+    blocks.reserve(depth);
+    for(int i = 0; i < depth; ++i){
+        if(i == 0) //To have only 
+            blocks.emplace_back(
+                stream, cudnn_handle, cublas_handle,
+                batch, tokens + 1, embeddings, mlp_hidden,
+                block_mlp_kernel_type,
+                block_epsilon, block_scale, num_heads,
+                init_block_descriptors,
+                allocate_blocks_shared_ptrs
+            );   // blocks constructed here
+        else
+            blocks.emplace_back(
+                stream, cudnn_handle, cublas_handle,
+                batch, tokens + 1, embeddings, mlp_hidden,
+                block_mlp_kernel_type,
+                block_epsilon, block_scale, num_heads,
+                false,
+                allocate_blocks_shared_ptrs
+            );
+    }
+
+    input_pic_elements_num = pe.get_input_pic_elem_n();
+    embedded_elements_num = pe.get_embedded_elem_n();
+    hidden_elements_number = blocks[0].get_hidden_elements_number();
+    ph.epsilon = pred_head_epsilon;
+}
+
+
+
+// 0) Allocate on device the buffers used in all the ops
+void GpuVit::allocate_shared_buffers(){
+    assert((batch * num_classes) < embedded_elements_num);
+    CUDA_CHECK(cudaMallocAsync(&d_pic    ,sizeof(half) * input_pic_elements_num, stream)); //[B,H,W,C]
+    CUDA_CHECK(cudaMallocAsync(&d_x      ,sizeof(half) * embedded_elements_num, stream));
+    CUDA_CHECK(cudaMallocAsync(&d_t      ,sizeof(half) * embedded_elements_num, stream));
+    CUDA_CHECK(cudaMallocAsync(&d_y      ,sizeof(half) * embedded_elements_num, stream));
+    CUDA_CHECK(cudaMallocAsync(&d_h      ,sizeof(half) * hidden_elements_number, stream));
+    CUDA_CHECK(cudaMallocAsync(&d_workspace, WORKSPACE_SIZE, stream));            
+    set_class_buffers();
+}
+
+// 1) Create all the descriptors for all the library functions used(cuBLAS and cuDNN)
+void GpuVit::create_descriptors(){
+    pe.init_descriptors();
+    for (size_t i = 0; i < depth; i++)
+    {
+        blocks[i].init_descriptors();
+    }
+
+    ph.init_descriptors();
+}
+
+// 2) Allocate on device the buffers for the weights, also the workspace used for this block
+void GpuVit::allocate_weights(){
+    pe.allocate_weights();
+
+    for (size_t i = 0; i < depth; i++)
+    {
+        blocks[i].allocate_weights();
+    }
+
+    ph.allocate_weights();
     
-    // vit_float *  get_cls_token();
-    // vit_size get_cls_token_shape();
+};
+
+// 3) Load all the weights for each component to the device
+void GpuVit::load_weights(
+    patch_emb_weights &pe_w,
+    vector<block_weights> &blk_w,
+    pred_head_weights &ph_w
+){
+    CUDA_CHECK(cudaStreamSynchronize(stream)); //needed for the buffer allocation to finish before loading the weights
+
+    pe.load_weights_data(
+        pe_w.conv_w,
+        pe_w.bias,
+        pe_w.pos_emb,
+        false
+    );
+
+    assert(blk_w.size() == depth);
+    for (size_t i = 0; i < depth; i++)
+    {
+
+        blocks[i].load_weights(
+            blk_w[i].n1_bias ,
+            blk_w[i].n1_scale ,
+            blk_w[i].n2_bias ,
+            blk_w[i].n2_scale ,
+            blk_w[i].fc1 ,
+            blk_w[i].b1_data ,
+            blk_w[i].fc2 ,
+            blk_w[i].b2_data ,
+            blk_w[i].attn_w
+        );
+    }
+
+    ph.load_weights(
+        ph_w.ln_scale,
+        ph_w.ln_bias,
+        ph_w.head_weights,
+        ph_w.head_bias
+    );
+}
+
+
+// 4) Load the input data to the model
+void GpuVit::load_pics(half * pics){
+    //put asyncronously data in d_pic, have to be `batch` pictures
+    pe.load_pics(pics);
+}
+
+
+/* 5) Forward of the model, starts from d_pic result in d_x!
+*/
+void GpuVit::forward(){
+    //Should all be happening in the same stream so no race conditions on the data
     
-    // vit_float * get_reg_token();
-    // void get_reg_token_shape(int reg_token_shape[2]);
-    // vit_float * get_pos_embed();
-    // void get_pos_embed_shape(int pos_embed_shape[2]);
-
-
-    // layer_data get_pre_norm(); // TO DO
-    // layer_shape get_pre_norm_shape();
-    // layer_data get_norm(); // TO DO
-    // layer_shape get_norm_shape();
-    // layer_data get_fc_norm();// TO DO
-    // layer_shape get_fc_norm_shape();
-
-
-
-    // void get_blocks(blocks_data data[]);
-    // void get_blocks_shape(blocks_shape shapes[]);
+    pe.forward();
     
-    // linear_data get_head();
-    // linear_shape get_head_shape();
-    cout << "=== VisionTransformer attributes ===" << endl;
+    for(int i = 0; i < depth; i++){
+        blocks[i].forward();
+    }
+    
+    ph.forward();
 
-    // Basic config
-    cout << "num_classes        : " << vit.get_num_classes() << endl;
-    cout << "global_pool        : " << static_cast<int>(vit.get_global_pool()) << "  (0=token,1=avg,2=avgmax,3=max)" << endl;
-    cout << "embed_dim          : " << vit.get_embed_dim() << endl;
-    cout << "depth (#blocks)    : " << vit.get_depth() << endl;
+}
 
-    // Tokens / prefix
-    cout << "has_class_token    : " << yesno(vit.get_has_class_token()) << endl;
-    cout << "num_reg_tokens     : " << vit.get_num_reg_tokens() << endl;
-    cout << "num_prefix_tokens  : " << vit.get_num_prefix_tokens() << endl;
-    cout << "no_embed_class     : " << yesno(vit.get_no_embed_class()) << endl;
 
-    // Booleans / modes
-    cout << "use_pos_embed      : " << yesno(vit.get_use_pos_embed()) << endl;
-    cout << "use_pre_norm       : " << yesno(vit.get_use_pre_norm()) << endl;
-    cout << "use_fc_norm        : " << yesno(vit.get_use_fc_norm()) << endl;
-    cout << "dynamic_img_size   : " << yesno(vit.get_dynamic_img_size()) << endl;
-    //Patch Embedder
-    int kshape[6] = {0,0,0,0,0,0};
-    vit.get_kernel_shape(kshape);
-    // Convention here is whatever the header/provider defined; we just echo the 6-tuple.
-    cout << "\n-- PatchEmbed / Conv2D --" << endl;
-    cout << "kernel_shape       : [" << kshape[0] << "," << kshape[1] << "," << kshape[2]
-            << "," << kshape[3] << "," << kshape[4] << "," << kshape[5] << "]" << endl;
+void GpuVit::print_dimensions(){
+    cout << "   picture dimensions: " << 
+    "["<< batch << ","<<channels  <<","<< img_h <<","<< img_w <<"]"<<endl;
+    cout << "   patch emb. kernel dimensions: " << 
+    "["<< embeddings << ","<<channels  <<","<< patch_h <<","<< patch_w <<"]"<<endl;
+    cout << "   embedded dimensions: "<<
+    "["<< batch << ","<< tokens  <<","<< embeddings <<"]"<<endl;
+    cout << "   mlp dimensions: "<<
+    "["<< embeddings << ","<< blocks[0].k_channels  << ","<< embeddings <<"]"<<endl;
+    cout << "   num classes: " << num_classes << endl;
+    cout << "   depth: " << depth << endl;
+}
 
-    vit_float* kptr = vit.get_conv2d_kernel();
-    vit_float* bptr = vit.get_conv2d_bias();
-    cout << "conv2d use_bias    : " << yesno(vit.get_conv2d_use_bias()) << endl;
-    cout << "kernel sample      : " << (kptr ? std::to_string(kptr[0]) : "null") << endl;
-    cout << "bias sample        : " << (bptr ? std::to_string(bptr[0]) : "null") << endl;
 
-    layer_shape pln_s = vit.get_patch_layer_shape();
-    cout << "patch LN g_size    : " << pln_s.g_size
-            << "  bias_size: " << pln_s.bias_size << endl;
-    cout << "patch_emb_use_norm  : " << yesno(vit.get_patch_emb_use_norm()) << endl;
-    if(vit.get_patch_emb_use_norm()){
-        layer_data  pln   = vit.get_patch_layer_norm();    
-        cout << "  eps: " << pln.eps
-            << "  use_bias: " << yesno(pln.use_bias) << endl;
+void GpuVit::free_weights(){
+    pe.free_weights();
+    
+    for(int i = 0; i < depth; i++){
+        blocks[i].free_weights();
     }
 
-    cout << "Pos embeddings: ";
-    int pos_shape[2];
-    vit.get_pos_embed_shape(pos_shape);
-    cout << "[" <<pos_shape[0] << "," << pos_shape[1] << "]" << endl;
-    // Matrix pos_emb(vit.get_pos_embed(), pos_shape[0] * pos_shape[1],pos_shape[0], pos_shape[1]);
-    // pos_emb.print();
+    ph.free_weights();
+}
 
-    cout << "\n-- Blocks --" << endl;
-    u_int depth = vit.get_blocks_number();
-    vector<blocks_shape> block_s;
-    block_s = vit.get_blocks_shape();
-    vector<blocks_data> blocks;
-    blocks = vit.get_blocks();
-	cout << " block attention dim: " << blocks[0].attention.dim << endl;
-	cout << " block attention head_dim: " << blocks[0].attention.head_dim << endl;
-	cout << " block attention num heads: " << blocks[0].attention.num_heads << endl;
-    cout << " block attention proj ln: " << yesno(blocks[0].attention.use_qk_norm) << endl;
-    cout << " block mlp ln: " << yesno(blocks[0].mlp.use_norm) << endl;
+void GpuVit::free_buffers(){
+    CUDA_CHECK(cudaFree(d_pic));
+    CUDA_CHECK(cudaFree(d_x));
+    CUDA_CHECK(cudaFree(d_t));
+    CUDA_CHECK(cudaFree(d_y));
+    CUDA_CHECK(cudaFree(d_h));
+    CUDA_CHECK(cudaFree(d_workspace));
+}     
 
-    // linear_data blk0_attn_k = blocks[0].attention.k_gen;
-    // Matrix host_k(blk0_attn_k.A, blk0_attn_k.in_features * blk0_attn_k.out_features, blk0_attn_k.in_features, blk0_attn_k.out_features);
-    // cout << "block 0 k attention matrix: "; host_k.print();
-
-    for(u_int idx = 0; idx < block_s.size(); idx++){
-        cout << idx <<" block k_gen_shape: col " << block_s[idx].attention_shape.k_gen_shape.a_col <<
-        " row: " <<  block_s[idx].attention_shape.k_gen_shape.a_row << endl;
-        cout << idx <<" block attention dim: " << blocks[idx].attention.dim << endl;
-        cout << idx <<" block attention projections bias: " << yesno(blocks[idx].attention.proj.use_bias) << endl;
-        cout << idx <<" block attention use layer norm: " << yesno(blocks[idx].attention.use_qk_norm) << endl;
-        cout << idx <<" block layer norm shape: " << block_s[idx].norm1_shape.g_size << "- bias -" <<block_s[idx].norm1_shape.bias_size <<endl<<endl;
+void GpuVit::destroy_descriptors(){
+    pe.destroy_descriptors();
+    for(int i = 0; i < depth; i++){
+        blocks[i].destroy_descriptors();
     }
+    ph.destroy_descriptors();
+}
 
-    if(vit.get_use_pre_norm()){
-        layer_shape pre_norm_s = vit.get_pre_norm_shape();
-        cout << "patch LN g_size    : " << pre_norm_s.g_size
-                << "  bias_size: " << pre_norm_s.bias_size << endl;
-        layer_data pre_norm = vit.get_pre_norm();
-        cout << "  eps: " << pre_norm.eps
-            << "  use_bias: " << yesno(pre_norm.use_bias) << endl;
-    }
-    if(vit.get_use_fc_norm()){
-        layer_shape n_s = vit.get_fc_norm_shape();
-        cout << "patch LN g_size    : " << n_s.g_size
-                << "  bias_size: " << n_s.bias_size << endl;
-        layer_data n = vit.get_fc_norm();
-        cout << "  eps: " << n.eps
-            << "  use_bias: " << yesno(n.use_bias) << endl;
-    }else{
-        layer_shape n_s = vit.get_norm_shape();
-        cout << "patch LN g_size    : " << n_s.g_size
-                << "  bias_size: " << n_s.bias_size << endl;
-        layer_data n = vit.get_norm();
-        cout << "  eps: " << n.eps
-            << "  use_bias: " << yesno(n.use_bias) << endl;
-    }
 
+void GpuVit::print_predictions(bool debug){
+    cout << "   predicted classes: " << endl;
+    for(int i = 0; i < batch; i++)
+        cout << i << ": " << ph.class_prediction[i] << endl;
+    if(debug){
+        cout << "probabilities array\n[";
+        for(int b = 0; b < batch; b++){   
+            for(int i = 0; i< num_classes; i++)
+                cout << ph.probabilities_array[b * num_classes + i] << " ";
+            cout << "]\n";
+        }
+    }
 }

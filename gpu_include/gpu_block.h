@@ -8,6 +8,28 @@
 
 #define LAYER_SCALE 0.00004
 
+struct block_weights{
+    half * n1_bias ;
+    half * n1_scale;
+    half * n2_bias ;
+    half * n2_scale;
+
+    attn_data_gpu<half> attn_w;
+
+    half * fc1    ;
+    half * b1_data;
+    half * fc2    ;
+    half * b2_data;
+
+    block_weights(
+        half * _n1_bias , half * _n1_scale,
+        half * _n2_bias , half * _n2_scale,
+        half * _q , half * _k , half * _v , half * _p ,
+        half * _qb, half * _kb, half * _vb, half * _pb,
+        half * _fc1, half * _b1_data,
+        half * _fc2, half * _b2_data
+    );
+};
 
 //One thread for each element
 __global__ void residual_test(half * d_x, half * d_y, u_int N);
@@ -85,8 +107,19 @@ public:
 
 public:
 
+    GpuBlock(const GpuBlock&)            = delete;
+    GpuBlock& operator=(const GpuBlock&) = delete;
+
+    GpuBlock(GpuBlock&& other) noexcept;
+    GpuBlock& operator=(GpuBlock&& other) noexcept;
+
+
+    /* 
+    -- CONSTRUCTORS USED FOR TESTING --
+    */
+
     //Pass all the descriptors(except the attention one) and the shapes and initialize all the memory buffers
-    GpuBlock(GpuBlock &precedent_block);
+    // GpuBlock(GpuBlock &precedent_block);
 
     GpuBlock(
         u_int B_, u_int T_, u_int C_, u_int K_,
@@ -103,7 +136,9 @@ public:
         void * d_x_, void * d_h_, void * d_t_, void * d_y_,
         bool kernel_type_,
         double epsilon_, float scale_, int num_heads_ = NUM_HEADS,
-        float rand_scale_ = 0.1f, bool initialize_descriptors = false
+        float rand_scale_ = 0.1f, 
+        bool initialize_descriptors = false,
+        bool allocate_weights = true
     );
 
     /*
@@ -134,10 +169,10 @@ public:
         float* n2b_data,
         float* n2g_data,
         //Attention
-        float* q_data,
-        float* k_data,
-        float* v_data,
-        float* p_data,   // O proj
+        float* q_data, 
+        float* k_data, 
+        float* v_data, 
+        float* p_data,    // O proj
         float* qb_data,
         float* kb_data,
         float* vb_data,
@@ -153,11 +188,31 @@ public:
         bool initialize_descriptors = false
     );
 
+    // ----
+
+    /* -- CONSTRUCTOR USED IN ViT -- */
+
+    GpuBlock(
+        cudaStream_t     &_stream,
+        cudnnHandle_t    &_cudnn_handle,
+        cublasLtHandle_t &_cublas_handle,
+        u_int B_, u_int T_, u_int C_, u_int K_,
+        bool kernel_type_,
+        double epsilon_, float scale_, int num_heads_ = NUM_HEADS,
+        bool initialize_descriptors = false,
+        bool allocate_weights = false
+    );
+
+    // ----
+
     // ---- dtor ----
     ~GpuBlock();
 
+    void free_host_buffers();
 
-    void init_attn_descriptor();
+    void free_buffers();
+
+    void init_attn_descriptor(bool load_attn_weights = true);
 
     //Initialize the attention descriptor given the weight matrices
     void init_attn_descriptor(
@@ -165,7 +220,21 @@ public:
         float * h_qb_, float * h_kb_, float * h_vb_, float * h_pb_
     ); 
 
+    void destroy_descriptors(bool weights = false, bool workspace = false);
 
+    void init_descriptors();
+
+    void allocate_weights();
+
+    void load_weights(
+        half * _n1b_data, half * _n1g_data,
+        half * _n2b_data, half * _n2g_data,
+        half * _A1_data, half * _b1_data,
+        half * _A2_data, half * _b2_data,
+        attn_data_gpu<half> attn_w
+    );
+
+    void free_weights();
     /*Generate random weights for the block
     - `attn_init`: true if the attn descriptor is already initialized, otherwise initialize it
     */
@@ -180,6 +249,14 @@ public:
     void forward(half * h_x, bool debug = false, u_int tokens_per_block = 2);
 
     // ---- Setters ----
+
+    void set_buffers(
+        void * _d_x,      
+        void * _d_t,      
+        void * _d_y,      
+        void * _d_h,  
+        void * _d_workspace_mlp  
+    );
 
     /*
     Copy on the host device the block weights, converting to half
@@ -218,7 +295,7 @@ public:
     //Call this method to destroy the shared device pointer and descriptors between block, should be called before the destructor call.
     void mark_shared_buffers();
 
-    void set_last_block();
+    void mark_shared_weights();
 
     //Initialize the block descriptors 
     void set_descriptors(
@@ -245,6 +322,8 @@ public:
 
     float get_rand_scale();
 
+    u_int get_hidden_elements_number();
+
     void to_CPU(Block &cpu_block, bool debug = false);
 
     void print_h_out();
@@ -261,8 +340,6 @@ private:
 
     //print d_x, d_t, d_h, d_y
     void print_debug();
-
-    void destroyCudnnDescriptors();
 
     //Transpose a square channels X channels mtx from float to half 
     void transposeHostF32toHalf(float* src, vector<half>& dst);

@@ -79,6 +79,28 @@ vit_bool Linear::get_use_bias() const {
     return use_bias;
 }
 
+vit_float *Linear::get_A()
+{
+    return A.get_data();
+}
+
+// 0 ==> ROW, 1 ==> COL
+void Linear::get_A_shape(int a_shape[2])
+{
+    a_shape[0] = A.get_ROWS();
+    a_shape[1] = A.get_COLS();
+}
+
+vit_float *Linear::get_b()
+{
+    return b.get_data();
+}
+
+vit_size Linear::get_b_dim()
+{
+    return b.get_DIM();
+}
+
 void Linear::move_A(Matrix& _A) {
     A = std::move(_A);
 }
@@ -189,6 +211,19 @@ void LayerNorm::operator()(Tensor& x, vit_size num_heads, vit_size head_dim) con
     }
 
 }
+
+vit_float * LayerNorm::get_g(){
+    return g.get_data();
+};
+vit_float * LayerNorm::get_bias(){
+    return b.get_data();
+};
+vit_size LayerNorm::get_g_dim(){
+    return g.get_DIM();
+};
+vit_size LayerNorm::get_bias_dim(){
+    return b.get_DIM();
+};
 
 vit_size LayerNorm::get_normalized_shape() const {
     return normalized_shape;

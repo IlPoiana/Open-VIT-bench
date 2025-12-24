@@ -28,6 +28,7 @@ do {                                                                            
 #define WARM_UP 5
 #define RUNS_N 10
 #define MAX_STREAMS_CONV2D 32
+#define WORKSPACE_SIZE 128 << 20 // 32Mb
 
 using namespace std;
 

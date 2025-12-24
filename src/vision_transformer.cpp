@@ -11,6 +11,9 @@
 #include <chrono>
 #include <iostream>
 
+inline std::string truefalse(bool b){ return b ? "true" : "false"; };
+
+
 VisionTransformer::VisionTransformer(
     vit_size img_size_h,
     vit_size img_size_w,
@@ -157,6 +160,9 @@ vit_size VisionTransformer::get_num_classes() const { return num_classes; }
 pool_type VisionTransformer::get_global_pool() const { return global_pool; }
 vit_size VisionTransformer::get_embed_dim() const { return embed_dim; }
 vit_size VisionTransformer::get_depth() const { return depth; }
+void VisionTransformer::get_img_size(vit_size &height, vit_size &width) const { 
+    patch_embed.get_image_size(height,width);
+}
 
 vit_bool VisionTransformer::get_has_class_token() const { return has_class_token; }
 vit_size VisionTransformer::get_num_reg_tokens() const { return num_reg_tokens; }
@@ -180,6 +186,7 @@ vit_bool VisionTransformer::get_conv2d_use_bias(){
     return patch_embed.get_use_bias();
 }
 
+// (int)in_channels,(int)out_channels,(int)kernel_h,(int)kernel_w,(int)stride_h,(int)stride_w
 void VisionTransformer::get_kernel_shape(int kernel_shape[6]){
     patch_embed.get_kernel_dimensions(kernel_shape);
 }
@@ -305,7 +312,7 @@ layer_shape VisionTransformer::get_fc_norm_shape()
     );
     return data;
 }
-// TO DO
+
 std::vector<blocks_data> VisionTransformer::get_blocks()
 {
     std::vector<blocks_data> data;
@@ -645,7 +652,6 @@ void VisionTransformer::position_embed(const Tensor& x_in, Tensor& x_out) const 
 
 void VisionTransformer::forward_features(const PictureBatch& p_in, Tensor& x_out) const {
     patch_embed.forward(p_in,x_out);
-
     this->position_embed(x_out,x_out);
 
     if (use_pre_norm == true) {
@@ -654,11 +660,16 @@ void VisionTransformer::forward_features(const PictureBatch& p_in, Tensor& x_out
 
     for (int i=0;i<depth;++i) {
         blocks.at(i).forward(x_out,x_out);
+        // if(i == 0){
+        //     // printf("first encoder block\n");
+        //     x_out.print();
+        // }
     }
-
+    // printf("After encoding blocks\n"); x_out.print();
     if (use_fc_norm == false) {
         norm(x_out);
     }
+    // printf("After ph layer norm\n"); x_out.print();
 }
 
 void VisionTransformer::pool(const Tensor& x_in, Tensor& x_out) const {
@@ -675,8 +686,10 @@ void VisionTransformer::forward_head(const Tensor& x_in, Tensor& x_out) const {
 
 void VisionTransformer::forward(const PictureBatch& pic, PredictionBatch& pred) const {
     Tensor x;
+    
     this->forward_features(pic, x);
     this->forward_head(x,x);
+    
     PredictionBatch pb(x);
     pred = std::move(pb);
 }
@@ -729,3 +742,171 @@ void VisionTransformer::timed_forward(const PictureBatch& pic, PredictionBatch& 
     pred = std::move(pb);
     times = std::move(t);
 }
+
+
+void VisionTransformer::print(){
+    using namespace std;
+    cout << "=== VisionTransformer attributes ===" << endl;
+
+    // Basic config
+    cout << "num_classes        : " << get_num_classes() << endl;
+    cout << "global_pool        : " << static_cast<int>(get_global_pool()) << "  (0=token,1=avg,2=avgmax,3=max)" << endl;
+    cout << "embed_dim          : " << get_embed_dim() << endl;
+    cout << "depth (#blocks)    : " << get_depth() << endl;
+
+    // Tokens / prefix
+    cout << "has_class_token    : " << truefalse(get_has_class_token()) << endl;
+    cout << "num_reg_tokens     : " << get_num_reg_tokens() << endl;
+    cout << "num_prefix_tokens  : " << get_num_prefix_tokens() << endl;
+    cout << "no_embed_class     : " << truefalse(get_no_embed_class()) << endl;
+
+    // Booleans / modes
+    cout << "use_pos_embed      : " << truefalse(get_use_pos_embed()) << endl;
+    cout << "use_pre_norm       : " << truefalse(get_use_pre_norm()) << endl;
+    cout << "use_fc_norm        : " << truefalse(get_use_fc_norm()) << endl;
+    cout << "dynamic_img_size   : " << truefalse(get_dynamic_img_size()) << endl;
+    //Patch Embedder
+    int kshape[6] = {0,0,0,0,0,0};
+    get_kernel_shape(kshape);
+    // Convention here is whatever the header/provider defined; we just echo the 6-tuple.
+    cout << "\n-- PatchEmbed / Conv2D --" << endl;
+    cout << "kernel_shape       : [" << kshape[0] << "," << kshape[1] << "," << kshape[2]
+            << "," << kshape[3] << "," << kshape[4] << "," << kshape[5] << "]" << endl;
+
+    vit_float* kptr = get_conv2d_kernel();
+    vit_float* bptr = get_conv2d_bias();
+    cout << "conv2d use_bias    : " << truefalse(get_conv2d_use_bias()) << endl;
+    cout << "kernel sample      : " << (kptr ? std::to_string(kptr[0]) : "null") << endl;
+    cout << "bias sample        : " << (bptr ? std::to_string(bptr[0]) : "null") << endl;
+
+    layer_shape pln_s = get_patch_layer_shape();
+    cout << "patch LN g_size    : " << pln_s.g_size
+            << "  bias_size: " << pln_s.bias_size << endl;
+    cout << "patch_emb_use_norm  : " << truefalse(get_patch_emb_use_norm()) << endl;
+    if(get_patch_emb_use_norm()){
+        layer_data  pln   = get_patch_layer_norm();    
+        cout << "  eps: " << pln.eps
+            << "  use_bias: " << truefalse(pln.use_bias) << endl;
+    }
+
+    cout << "Pos embeddings: ";
+    int pos_shape[2];
+    get_pos_embed_shape(pos_shape);
+    cout << "[" <<pos_shape[0] << "," << pos_shape[1] << "]" << endl;
+    // Matrix pos_emb(vit.get_pos_embed(), pos_shape[0] * pos_shape[1],pos_shape[0], pos_shape[1]);
+    // pos_emb.print();
+
+    cout << "\n-- Blocks --" << endl;
+    u_int depth = get_blocks_number();
+    vector<blocks_shape> block_s;
+    block_s = get_blocks_shape();
+    vector<blocks_data> blocks;
+    blocks = get_blocks();
+	cout << " block attention dim: " << blocks[0].attention.dim << endl;
+	cout << " block attention head_dim: " << blocks[0].attention.head_dim << endl;
+	cout << " block attention num heads: " << blocks[0].attention.num_heads << endl;
+    cout << " block mlp hidden dim: " << blocks[0].mlp.hidden_features << endl;
+    cout << " block attention proj ln: " << truefalse(blocks[0].attention.use_qk_norm) << endl;
+    cout << " block mlp ln: " << truefalse(blocks[0].mlp.use_norm) << endl;
+    cout << " block layer scale 1: " << blocks[0].ls1.val << endl;
+    cout << " block layer scale 2: " << blocks[0].ls2.val << endl;
+
+    // linear_data blk0_attn_k = blocks[0].attention.k_gen;
+    // Matrix host_k(blk0_attn_k.A, blk0_attn_k.in_features * blk0_attn_k.out_features, blk0_attn_k.in_features, blk0_attn_k.out_features);
+    // cout << "block 0 k attention matrix: "; host_k.print();
+
+    // for(u_int idx = 0; idx < block_s.size(); idx++){
+    //     cout << idx <<" block k_gen_shape: col " << block_s[idx].attention_shape.k_gen_shape.a_col <<
+    //     " row: " <<  block_s[idx].attention_shape.k_gen_shape.a_row << endl;
+    //     cout << idx <<" block attention dim: " << blocks[idx].attention.dim << endl;
+    //     cout << idx <<" block attention projections bias: " << truefalse(blocks[idx].attention.proj.use_bias) << endl;
+    //     cout << idx <<" block attention use layer norm: " << truefalse(blocks[idx].attention.use_qk_norm) << endl;
+    //     cout << idx <<" block layer norm shape: " << block_s[idx].norm1_shape.g_size << "- bias -" <<block_s[idx].norm1_shape.bias_size <<endl<<endl;
+    // }
+
+    if(get_use_pre_norm()){
+        layer_shape pre_norm_s = get_pre_norm_shape();
+        cout << "patch LN g_size    : " << pre_norm_s.g_size
+                << "  bias_size: " << pre_norm_s.bias_size << endl;
+        layer_data pre_norm = get_pre_norm();
+        cout << "  eps: " << pre_norm.eps
+            << "  use_bias: " << truefalse(pre_norm.use_bias) << endl;
+    }
+    if(get_use_fc_norm()){
+        layer_shape n_s = get_fc_norm_shape();
+        cout << "patch LN g_size    : " << n_s.g_size
+                << "  bias_size: " << n_s.bias_size << endl;
+        layer_data n = get_fc_norm();
+        cout << "  eps: " << n.eps
+            << "  use_bias: " << truefalse(n.use_bias) << endl;
+    }else{
+        layer_shape n_s = get_norm_shape();
+        cout << "patch LN g_size    : " << n_s.g_size
+                << "  bias_size: " << n_s.bias_size << endl;
+        layer_data n = get_norm();
+        cout << "  eps: " << n.eps
+            << "  use_bias: " << truefalse(n.use_bias) << endl;
+    }
+
+    cout << "\n-- Prediction Head --" << endl;
+    cout << "use ln bias: " << truefalse(norm.get_use_bias()) << endl;    
+    cout << "use linear bias: " << truefalse(head.get_use_bias()) << endl;    
+    cout << "epsilon: " << norm.get_eps() << endl;
+}
+
+void VisionTransformer::print_block(int idx, int what){
+    blocks_data block = get_blocks()[idx];
+    switch (what){
+        case 0:
+            {
+                RowVector scale(block.norm1.g, embed_dim);
+                RowVector bias(block.norm1.bias, embed_dim);
+                printf("norm1\nscale\n"); scale.print();
+                printf("bias\n"); bias.print();
+            }
+            break;
+        case 1:
+            {
+                Matrix q(block.attention.q_gen.A , embed_dim * embed_dim, embed_dim,  embed_dim);
+                Matrix k(block.attention.k_gen.A , embed_dim * embed_dim, embed_dim,  embed_dim);
+                Matrix v(block.attention.v_gen.A , embed_dim * embed_dim, embed_dim,  embed_dim);
+                Matrix p(block.attention.proj.A  , embed_dim * embed_dim, embed_dim,  embed_dim); 
+                RowVector qb(block.attention.q_gen.b , embed_dim);
+                RowVector kb(block.attention.k_gen.b , embed_dim);
+                RowVector vb(block.attention.v_gen.b , embed_dim);
+                RowVector pb(block.attention.proj.b  , embed_dim); 
+                printf("attn\nq\n");q.print();
+                printf("k\n");k.print();
+                printf("v\n");v.print();
+                printf("p\n");p.print();
+                printf("qb\n");qb.print();
+                printf("kb\n");kb.print();
+                printf("vb\n");vb.print();
+                printf("pb\n");pb.print();
+                
+
+            }
+            break;
+        case 2:
+            printf("ls1\nTO DO");
+            break;
+        case 3:
+            {
+                RowVector scale(block.norm2.g, embed_dim);
+                RowVector bias(block.norm2.bias, embed_dim);
+                printf("norm2\nscale\n"); scale.print();
+                printf("bias\n"); bias.print();
+            }
+            break;
+        case 4:
+            printf("mlp\nTO DO");
+            break;
+        case 5:
+            printf("ls2\nTO DO");
+            break;
+        default:
+            printf("Choose something");
+            break;
+    }
+}
+    

@@ -31,7 +31,7 @@ Attention::Attention (
     head_dim = _dim / _num_heads;
     scale = std::pow(head_dim, -0.5);
     use_qk_norm = _use_qk_norm;
-    printf("use qkv bias %d\n", use_qkv_bias);
+    // printf("use qkv bias %d\n", use_qkv_bias);
 }
 
 Attention::Attention(Attention&& attn) :
@@ -357,24 +357,24 @@ void Attention::multi_head_attention(
                 for (int qk_c=0;qk_c<N;++qk_c) { // qk is B*N*(N*nh), that's why it's C is also N
                     val = qk.at(batch, qk_n, (nh*N) + qk_c);
                     //TO REMOVE
-                    if(!isfinite(val)) {
-                        printf("- %f -", val);
-                        throw std::range_error("Error in CPU attention");
-                    }
+                    // if(!isfinite(val)) {
+                    //     printf("- %f -", val);
+                    //     throw std::range_error("Error in CPU attention");
+                    // }
                     //----
                     val = std::exp(val);
                     //TO REMOVE
-                    if(!isfinite(val)) {
-                        printf("After the exponential - %f -", val);
-                        throw std::range_error("Error in CPU attention");
-                    }
+                    // if(!isfinite(val)) {
+                    //     printf("After the exponential - %f -", val);
+                    //     throw std::range_error("Error in CPU attention");
+                    // }
                     //----
                     cumulative += val;
                     //TO REMOVE
-                    if(!isfinite(cumulative)) {
-                        printf("Cumulative - %f -", cumulative);
-                        throw std::range_error("Error in CPU attention");
-                    }
+                    // if(!isfinite(cumulative)) {
+                    //     printf("Cumulative - %f -", cumulative);
+                    //     throw std::range_error("Error in CPU attention");
+                    // }
                     //----
                     qk.set(batch, qk_n, (nh*N) + qk_c, val);
                 }

@@ -1,6 +1,22 @@
 #include "./gpu_layer.h"
 #include "./gpu_mlp.h"
 
+struct pred_head_weights{
+    half * ln_scale;    
+    half * ln_bias;     
+    half * head_weights;
+    half * head_bias;  
+    
+    pred_head_weights();
+
+    pred_head_weights(
+        half * _ln_scale,   
+        half * _ln_bias,    
+        half * _head_weights,
+        half * _head_bias   
+    );
+};
+
 struct softmax_desc {
     cudnnTensorDescriptor_t x_desc;
     cudnnSoftmaxAlgorithm_t algo = CUDNN_SOFTMAX_FAST;
@@ -35,7 +51,7 @@ class GpuPredictionHead {
         void * d_t;         
         void * d_y;         
         void * d_pred;      
-        void * d_workspace;
+        void * d_workspace = nullptr;
 
         // Unique pointers
         void * d_ln_scale;      
@@ -52,6 +68,7 @@ class GpuPredictionHead {
         u_int blocks_num;
         u_int block_dim;
         u_int tokens_per_block = 1;
+        double epsilon = 1e-4;
 
         vector<float> probabilities_array;
         vector<int> class_prediction;
@@ -68,9 +85,7 @@ class GpuPredictionHead {
             u_int class_num_,
             cudnnHandle_t &cudnn_handle_,
             cublasLtHandle_t &cublas_handle_,
-            cudaStream_t &stream_,
-            void * d_workspace_ = nullptr,
-            bool allocate = true
+            cudaStream_t &stream_
         );
 
         ~GpuPredictionHead();
@@ -79,9 +94,11 @@ class GpuPredictionHead {
 
         void mark_shared_weights();
 
+        void init_descriptors();
+
         void destroy_descriptors();
 
-        void allocate_ptrs();
+        void allocate_weights();
 
         void load_weights(
             half * h_ln_scale_,   
@@ -89,6 +106,8 @@ class GpuPredictionHead {
             half * h_head_weights_,
             half * h_head_bias_  
         );
+
+        void free_weights();
 
         void set_shared_weights(
             void * d_ln_scale_,   
@@ -101,7 +120,8 @@ class GpuPredictionHead {
             void * d_x_,        
             void * d_t_,        
             void * d_y_,        
-            void * d_pred_    
+            void * d_pred_,
+            void * d_workspace_        
         );
 
         void compute_predictions();
@@ -112,7 +132,6 @@ class GpuPredictionHead {
         u_int input_elements_number;
         float alpha = 1.0f;
         float beta = 0.0f;
-        double epsilon = 1e-4;
         bool destroy_shared_weights = false;
         bool destroy_shared_buffers = false;
 

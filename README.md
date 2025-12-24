@@ -88,7 +88,7 @@ The benchmark is intended to compare the performance of the different ViT implem
 
 Then, run `bash create_dataset.sh` to create a random dataset in the *data/* folder. You can adjust the dataset creation parameters in the appropriate section of *params.sh* file. Continue running `bash create_models.sh`: it will generate the ViT models and store them in the *models/* folder.
 
-The core of the benchmark is represented by `bash run_cpp.sh`, `bash run_py.sh``bash run_omp.sh`. These scripts execute the respective models, storing their output in the *out/* folder and their time measures in the *measures/* folder. You can control the number of OMP threads acting on *params.sh*.
+The core of the benchmark is represented by `bash run_cpp.sh`, `bash run_py.sh` `bash run_omp.sh`. These scripts execute the respective models, storing their output in the *out/* folder and their time measures in the *measures/* folder. You can control the number of OMP threads acting on *params.sh*.
 
 Finally, execute `bash elaborate.sh`, it will compare each C++ output with the correspondent output of the other two models ensuring that all of them behave the same. Each comparison will be stored in the *out_comparison/* folder, but they will also be collapsed in a single file in the *logs/* folder. This same script will analyze time measures as well, and the result it gets will again be put in the *logs/* folder.
 

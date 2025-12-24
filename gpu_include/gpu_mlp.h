@@ -1,9 +1,10 @@
+#pragma once
 #include "./gpu_datatypes.h"
 // #include "./cuda_utils.h"
 #define MLP_DATA_TYPE CUDA_R_16F// Half
 #define MLP_COMPUTE_DATA_TYPE CUBLAS_COMPUTE_32F_PEDANTIC //to avoid using tensor cores
 // #define MLP_COMPUTE_DATA_TYPE CUBLAS_COMPUTE_16F_PEDANTIC //to avoid using tensor cores
-#define MLP_WORKSPACE_SIZE 4194304 //4MB
+#define MLP_WORKSPACE_SIZE WORKSPACE_SIZE //4194304 //4MB
 #define MLP_BLOCK_DIM 256
 
 #define SQRT_2_PI_fp16 hsqrt(__float2half(M_2_PIf32))
@@ -86,7 +87,7 @@ void fused_gpu_mlp(
     void * d_y
 );
 
-void bias_matrix(half * d_b, half * d_b_mtx, u_int row, u_int col);
+void bias_matrix(half * h_b, half * h_b_mtx, u_int row, u_int col);
 
 /*
 FUNCTIONS USED IN DEV PHASE

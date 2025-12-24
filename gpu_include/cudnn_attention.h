@@ -79,15 +79,33 @@ struct attn_cuDNN_descriptors{
     size_t weightBytes=0, workBytes=0;
     void* dWeights = nullptr, * dWork = nullptr;
 
-    void destroy_descriptors();
+    void destroy_descriptors(bool free_weights = true, bool free_workspace = true);
 };
+
+//Allocate the weight buffer fetched by cuDNN
+void allocate_attn_weights(
+    cudnnHandle_t &handle,
+    cudaStream_t &stream,
+    attn_cuDNN_descriptors &descriptors,
+    bool alloc_workspace = false
+);
+
+//Load the weights for the attention function. `descriptors.wAddr` is the pointer the the weights location
+void load_attn_weights(
+    cudnnHandle_t &handle,
+    cudaStream_t &stream,
+    attn_data_gpu<half> attn_w,
+    attn_dimensions_gpu dim,
+    attn_cuDNN_descriptors &descriptors
+);
 
 void initialize_attn_descriptors(
     cudnnHandle_t &handle,
     attn_data_gpu<half> weights,
     attn_dimensions_gpu dim,
     attn_cuDNN_descriptors &descriptors,
-    int num_heads = TEST_NUM_HEADS
+    int num_heads = TEST_NUM_HEADS,
+    bool load_weights = true
 );
 
 void cudnn_attention(
@@ -114,4 +132,14 @@ void attention_device(
     void * d_input, void * d_output,
     attn_cuDNN_descriptors &descriptors,
     bool residual = false, void * d_residuals = nullptr
+);
+
+void attention_device_debug(
+    cudnnHandle_t &handle,
+    void * d_q,
+    void * d_k,
+    void * d_v,
+    void * d_output,
+    attn_cuDNN_descriptors &descriptors,
+    bool residuals = false, void * d_residuals = nullptr
 );

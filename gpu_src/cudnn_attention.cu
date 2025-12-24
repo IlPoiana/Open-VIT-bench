@@ -7,41 +7,31 @@ attn_dimensions_gpu::attn_dimensions_gpu(u_int _B,u_int _T,u_int _C,u_int _proj)
     proj_dim = _proj;
 }
 
-void attn_cuDNN_descriptors::destroy_descriptors(){
-    cudnnDestroyDropoutDescriptor(attnDrop);
-    cudnnDestroyDropoutDescriptor(postDrop);
-    cudnnDestroyAttnDescriptor(attn);
-    cudnnDestroySeqDataDescriptor(qDesc);
-    cudnnDestroySeqDataDescriptor(kDesc);
-    cudnnDestroySeqDataDescriptor(vDesc);
-    cudnnDestroySeqDataDescriptor(oDesc);
-    cudaFree(dLenQO);
-    cudaFree(dLenKV);
-    if (weightBytes) cudaFree(dWeights);
-    if (workBytes)   cudaFree(dWork);
-}
-
 /*
 Assuming handle is already initialized
-Initialize the attention descriptors contained in the `descriptors` variable
+Initialize the attention descriptors contained in the `descriptors` variable and allocate + copy the weights to the cuDNN speicfied position.
+`descriptors.wAddr` will contain the weights.
+`load_weights` controls if allocate and load the weights on the device
 */
 void initialize_attn_descriptors(
     cudnnHandle_t &handle,
     attn_data_gpu<half> weights, //host weights
     attn_dimensions_gpu dim,
     attn_cuDNN_descriptors &descriptors,
-    int num_heads
+    int num_heads,
+    bool load_weights
 ){
     //Variable definition
 
-    const int seq_length = dim.T; // 7
-    const int batch_size = dim.B; // 2
-    const int beam_dim = 1;   // 9
-    const int emb_dim = dim.C;    // 9
-    const double scale = pow( emb_dim / num_heads, -0.5);
+    const int seq_length = dim.T; 
+    const int batch_size = dim.B;
+    const int beam_dim = 1;   
+    const int emb_dim = dim.C; 
+   
+    const double scale = pow( double(emb_dim) / double(num_heads), -0.5);
 
     const int qkv_projSize = emb_dim / num_heads; //should be the size of projection (so MHA like 3)
-    const int o_projSize = qkv_projSize * num_heads;
+    const int o_projSize = qkv_projSize * num_heads; assert(o_projSize == emb_dim);
 
     //1) Create the attnDropout descriptors (not used)
     // --- Dropout descriptors (set to 0.0) required by Attn descriptor
@@ -110,7 +100,7 @@ void initialize_attn_descriptors(
     makeSeqDesc(descriptors.qDesc, /*vecSize before proj*/emb_dim);
     makeSeqDesc(descriptors.kDesc, /*vecSize before proj*/emb_dim);
     makeSeqDesc(descriptors.vDesc, /*vecSize before proj*/emb_dim);
-    makeSeqDesc(descriptors.oDesc, /*vecSize after  proj*/emb_dim); 
+    makeSeqDesc(descriptors.oDesc, /*vecSize after  proj*/o_projSize); 
 
     //5) Dev seq lengths (must be on device for forward)
     std::vector<int> hLen(batch_size*beam_dim, seq_length);
@@ -119,19 +109,111 @@ void initialize_attn_descriptors(
     CUDA_CHECK(cudaMemcpy(descriptors.dLenQO, hLen.data(), hLen.size()*sizeof(int), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(descriptors.dLenKV, hLen.data(), hLen.size()*sizeof(int), cudaMemcpyHostToDevice));
 
-    std::vector<int> loWin(seq_length, 0);
-    descriptors.loWin = loWin;
-    for (int t=0; t<seq_length; ++t) descriptors.hiWin[t] = seq_length;
-    //6) Get buffer sizes
-    // --- Query buffer sizes & allocate weights/workspace (reserve=NULL => inference)
-    CUDNN_CHECK(cudnnGetMultiHeadAttnBuffers(handle, descriptors.attn, &descriptors.weightBytes, &descriptors.workBytes, /*reserveSpaceSize=*/nullptr)); // :contentReference[oaicite:4]{index=4}
-    if (descriptors.weightBytes) CUDA_CHECK(cudaMalloc(&descriptors.dWeights, descriptors.weightBytes));
-    if (descriptors.workBytes)  CUDA_CHECK(cudaMalloc(&descriptors.dWork, descriptors.workBytes));
-
+    descriptors.loWin.assign(seq_length, 0);
+    descriptors.hiWin.assign(seq_length, seq_length);
     
+    if(load_weights){
+        //6) Get buffer sizes
+        // --- Query buffer sizes & allocate weights/workspace (reserve=NULL => inference)
+        CUDNN_CHECK(cudnnGetMultiHeadAttnBuffers(handle, descriptors.attn, &descriptors.weightBytes, &descriptors.workBytes, /*reserveSpaceSize=*/nullptr)); // :contentReference[oaicite:4]{index=4}
+        if (descriptors.weightBytes > 0) CUDA_CHECK(cudaMalloc(&descriptors.dWeights, descriptors.weightBytes));
+        if (descriptors.workBytes > 0)  CUDA_CHECK(cudaMalloc(&descriptors.dWork, descriptors.workBytes));
+        /*TO REMOVE*/
+        cout << "descriptors.workBytes " << descriptors.workBytes << endl;
+        //----
+        
+
+        //7) Allocate weight array and set the projection descriptors
+        auto fill_proj_identity = [&](cudnnMultiHeadAttnWeightKind_t kind, half * host_data, size_t device_size){
+            cudnnTensorDescriptor_t wDesc;
+            CUDNN_CHECK(cudnnCreateTensorDescriptor(&wDesc));
+            void* wAddr = nullptr;
+            // Get a descriptor and device address for this weight group
+            CUDNN_CHECK(
+                cudnnGetMultiHeadAttnWeights(handle, descriptors.attn, kind, descriptors.weightBytes, descriptors.dWeights,wDesc, &wAddr)
+            );
+
+            //Re-arrange the weights according to the fetched dimensions and strides
+            cudnnDataType_t dtype; int nbDims; int dimA[4];int strideA[4];
+            CUDNN_CHECK(cudnnGetTensorNdDescriptor(wDesc,4,&dtype, &nbDims, dimA,strideA));
+            assert(nbDims == 3);
+
+            // Copy to the returned device address 
+            CUDA_CHECK(cudaMemcpy(wAddr, host_data, device_size*sizeof(half), cudaMemcpyHostToDevice));
+
+            CUDNN_CHECK(cudnnDestroyTensorDescriptor(wDesc));
+        };
+        
+        if(qkv_projSize != 0){
+            fill_proj_identity(CUDNN_MH_ATTN_Q_WEIGHTS, weights.d_q, emb_dim * emb_dim);
+            fill_proj_identity(CUDNN_MH_ATTN_K_WEIGHTS, weights.d_k, emb_dim * emb_dim);
+            fill_proj_identity(CUDNN_MH_ATTN_V_WEIGHTS, weights.d_v, emb_dim * emb_dim);
+            //biases
+            fill_proj_identity(CUDNN_MH_ATTN_Q_BIASES, weights.d_qb, emb_dim);
+            fill_proj_identity(CUDNN_MH_ATTN_K_BIASES, weights.d_kb,emb_dim );
+            fill_proj_identity(CUDNN_MH_ATTN_V_BIASES, weights.d_vb,emb_dim );
+            
+        }
+        if(o_projSize != 0){
+            fill_proj_identity(CUDNN_MH_ATTN_O_WEIGHTS, weights.d_o, emb_dim * emb_dim); 
+            fill_proj_identity(CUDNN_MH_ATTN_O_BIASES, weights.d_ob, emb_dim);
+
+        }
+    }
+    return;
+
+}
+
+void attn_cuDNN_descriptors::destroy_descriptors(bool free_weights, bool free_workspace){
+    cudnnDestroyDropoutDescriptor(attnDrop);
+    cudnnDestroyDropoutDescriptor(postDrop);
+    cudnnDestroyAttnDescriptor(attn);
+    cudnnDestroySeqDataDescriptor(qDesc);
+    cudnnDestroySeqDataDescriptor(kDesc);
+    cudnnDestroySeqDataDescriptor(vDesc);
+    cudnnDestroySeqDataDescriptor(oDesc);
+    cudaFree(dLenQO);
+    cudaFree(dLenKV);
+    if (weightBytes && free_weights) cudaFree(dWeights);
+    if (workBytes && free_workspace)  cudaFree(dWork);
+}
+
+
+void allocate_attn_weights(
+    cudnnHandle_t &handle,
+    cudaStream_t &stream,
+    attn_cuDNN_descriptors &descriptors,
+    bool alloc_workspace
+){
+      //6) Get buffer sizes
+    // --- Query buffer sizes & allocate weights/workspace (reserve=NULL => inference)
+    CUDNN_CHECK(cudnnGetMultiHeadAttnBuffers(
+        handle,
+        descriptors.attn,
+        &descriptors.weightBytes,
+        &descriptors.workBytes,
+        /*reserveSpaceSize=*/nullptr
+    ));
+    if (descriptors.weightBytes > 0) CUDA_CHECK(cudaMallocAsync(&descriptors.dWeights, descriptors.weightBytes, stream));
+    if (alloc_workspace && descriptors.workBytes > 0)  {
+        CUDA_CHECK(cudaMallocAsync(&descriptors.dWork, descriptors.workBytes, stream));
+    }
+    else{
+        assert(descriptors.workBytes < WORKSPACE_SIZE);
+    }
+}
+
+void load_attn_weights(
+    cudnnHandle_t &handle,
+    cudaStream_t &stream,
+    attn_data_gpu<half> attn_w,
+    attn_dimensions_gpu dim,
+    attn_cuDNN_descriptors &descriptors
+){
+    const int emb_dim = dim.C;
 
     //7) Allocate weight array and set the projection descriptors
-    auto fill_proj_identity = [&](cudnnMultiHeadAttnWeightKind_t kind, half * host_data, size_t device_size){
+    auto load_attn_weights = [&](cudnnMultiHeadAttnWeightKind_t kind, half * host_data, size_t device_size){
         cudnnTensorDescriptor_t wDesc;
         CUDNN_CHECK(cudnnCreateTensorDescriptor(&wDesc));
         void* wAddr = nullptr;
@@ -145,32 +227,97 @@ void initialize_attn_descriptors(
         CUDNN_CHECK(cudnnGetTensorNdDescriptor(wDesc,4,&dtype, &nbDims, dimA,strideA));
         assert(nbDims == 3);
 
+        //TO REMOVE
+        // cout << "[" << dimA[0]<< ", " << dimA[1] << ", " << dimA[2] << "]" << endl;
+        // cout << "[" << strideA[0]<< ", " << strideA[1] << ", " << strideA[2] << "]" << endl;
+        //----
+
         // Copy to the returned device address 
-        CUDA_CHECK(cudaMemcpy(wAddr, host_data, device_size*sizeof(half), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpyAsync(wAddr, host_data, device_size*sizeof(half), cudaMemcpyHostToDevice, stream));
 
         CUDNN_CHECK(cudnnDestroyTensorDescriptor(wDesc));
     };
     
-    if(qkv_projSize != 0){
-        cout<< "qk projections" << endl;
-        fill_proj_identity(CUDNN_MH_ATTN_Q_WEIGHTS, weights.d_q, emb_dim * emb_dim);
-        fill_proj_identity(CUDNN_MH_ATTN_K_WEIGHTS, weights.d_k,emb_dim * emb_dim);
-        fill_proj_identity(CUDNN_MH_ATTN_V_WEIGHTS, weights.d_v,emb_dim * emb_dim);
-        //biases
-        fill_proj_identity(CUDNN_MH_ATTN_Q_BIASES, weights.d_qb, emb_dim);
-        fill_proj_identity(CUDNN_MH_ATTN_K_BIASES, weights.d_kb,emb_dim );
-        fill_proj_identity(CUDNN_MH_ATTN_V_BIASES, weights.d_vb,emb_dim );
-        
-    }
-    if(o_projSize != 0){
-        cout << "ov projections" << endl;
-        fill_proj_identity(CUDNN_MH_ATTN_O_WEIGHTS, weights.d_o, emb_dim * emb_dim); 
-        fill_proj_identity(CUDNN_MH_ATTN_O_BIASES, weights.d_ob, emb_dim);
-
-    }
-    return;
+    load_attn_weights(CUDNN_MH_ATTN_Q_WEIGHTS, attn_w.d_q, emb_dim * emb_dim);
+    load_attn_weights(CUDNN_MH_ATTN_K_WEIGHTS, attn_w.d_k, emb_dim * emb_dim);
+    load_attn_weights(CUDNN_MH_ATTN_V_WEIGHTS, attn_w.d_v, emb_dim * emb_dim);
+    load_attn_weights(CUDNN_MH_ATTN_O_WEIGHTS, attn_w.d_o, emb_dim * emb_dim); 
+    //biases
+    load_attn_weights(CUDNN_MH_ATTN_Q_BIASES, attn_w.d_qb, emb_dim);
+    load_attn_weights(CUDNN_MH_ATTN_K_BIASES, attn_w.d_kb, emb_dim);
+    load_attn_weights(CUDNN_MH_ATTN_V_BIASES, attn_w.d_vb, emb_dim);
+    load_attn_weights(CUDNN_MH_ATTN_O_BIASES, attn_w.d_ob, emb_dim);
 
 }
+
+/*
+We assume for our case that each weight matrix is square(self-attention) or that the projection of the Wqkv are equals to C
+*/
+void attention_device(
+    cudnnHandle_t &handle,
+    void * d_input, void * d_output,
+    attn_cuDNN_descriptors &descriptors,
+    bool residuals, void * d_residuals
+){
+    /*TO REMOVE
+    // cout << "weightBytes: " << descriptors.weightBytes << endl;
+    // cout << "descriptors.loWin " << endl;
+    // for(int i = 0; i < descriptors.loWin.size(); i++) cout << " " << descriptors.loWin.data()[i];
+    // cout << "\ndescriptors.hiWin " << endl;
+    // for(int i = 0; i < descriptors.hiWin.size(); i++) cout << " " << descriptors.hiWin.data()[i];
+    cout << "\nqDesc" << endl; printSeqDataDescriptor(descriptors.qDesc);
+    cout << "kDesc" << endl; printSeqDataDescriptor(descriptors.kDesc);
+    cout << "vDesc" << endl; printSeqDataDescriptor(descriptors.vDesc);
+    cout << "oDesc" << endl; printSeqDataDescriptor(descriptors.oDesc);
+    */
+    CUDNN_CHECK(cudnnMultiHeadAttnForward(
+        handle, descriptors.attn,
+        /*currIdx*/ -1,
+        descriptors.loWin.data(), descriptors.hiWin.data(),
+        descriptors.dLenQO, descriptors.dLenKV,
+        descriptors.qDesc, d_input,
+        /*residuals*/ residuals ? d_residuals : nullptr,// dQ,           
+        descriptors.kDesc, d_input,
+        descriptors.vDesc, d_input,
+        descriptors.oDesc, d_output,
+        descriptors.weightBytes, descriptors.dWeights,
+        descriptors.workBytes, descriptors.dWork,
+        /*reserveSpaceSizeInBytes*/ 0,   // inference path
+        /*reserveSpace*/ nullptr)); 
+}
+
+
+
+
+/*  
+-- DEV PHASE FUNCTIONS --
+*/
+
+void attention_device_debug(
+    cudnnHandle_t &handle,
+    void * d_q,
+    void * d_k,
+    void * d_v,
+    void * d_output,
+    attn_cuDNN_descriptors &descriptors,
+    bool residuals, void * d_residuals
+){
+    CUDNN_CHECK(cudnnMultiHeadAttnForward(
+        handle, descriptors.attn,
+        /*currIdx*/ -1,
+        descriptors.loWin.data(), descriptors.hiWin.data(),
+        descriptors.dLenQO, descriptors.dLenKV,
+        descriptors.qDesc, d_q,
+        /*residuals*/ residuals ? d_residuals : nullptr,// dQ,           
+        descriptors.kDesc, d_k,
+        descriptors.vDesc, d_v,
+        descriptors.oDesc, d_output,
+        descriptors.weightBytes, descriptors.dWeights,
+        descriptors.workBytes, descriptors.dWork,
+        /*reserveSpaceSizeInBytes*/ 0,   // inference path
+        /*reserveSpace*/ nullptr)); 
+}
+
 
 /*Self contained version for numerical testing
 We assume for our case that each weight matrix is square(self-attention) or that the projection of the Wqkv are equals to C
@@ -339,31 +486,6 @@ void attention_device(
         return;
 }
 
-/*
-We assume for our case that each weight matrix is square(self-attention) or that the projection of the Wqkv are equals to C
-*/
-void attention_device(
-    cudnnHandle_t &handle,
-    void * d_input, void * d_output,
-    attn_cuDNN_descriptors &descriptors,
-    bool residuals, void * d_residuals
-){
-    CUDNN_CHECK(cudnnMultiHeadAttnForward(
-        handle, descriptors.attn,
-        /*currIdx*/ -1,
-        descriptors.loWin.data(), descriptors.hiWin.data(),
-        descriptors.dLenQO, descriptors.dLenKV,
-        descriptors.qDesc, d_input,
-        /*residuals*/ residuals ? d_residuals : nullptr,// dQ,           
-        descriptors.kDesc, d_input,
-        descriptors.vDesc, d_input,
-        descriptors.oDesc, d_output,
-        descriptors.weightBytes, descriptors.dWeights,
-        descriptors.workBytes, descriptors.dWork,
-        /*reserveSpaceSizeInBytes*/ 0,   // inference path
-        /*reserveSpace*/ nullptr)); 
-        return;
-}
 
 void cudnn_attention(
     mtx q_host,

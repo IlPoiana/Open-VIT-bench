@@ -97,19 +97,25 @@ __device__ void dev_block_layer_norm(
     __shared__ half mean;
     __shared__ half variance;
     
-    __shared__ half x_sh[SH_MEM_DIM]; // n_elems < block size in this case
+    // /*OG*/__shared__ half x_sh[SH_MEM_DIM]; // n_elems < block size in this case
+    half x_sh[2];
     __shared__ half x_buff[SH_MEM_DIM]; // n_elems < block size in this case
     half c = __uint2half_rn(C);
     u_int stride = (C + 1) >> 1;
 
     if(idx < stride){
         // load 2 elements per thread, to increase threads occupancy!
-        x_sh[idx] = x_data[global_idx];
-        x_buff[idx] = x_sh[idx];
-        
+        //OG
+        // x_sh[idx] = x_data[global_idx];
+        // x_buff[idx] = x_sh[idx];
+        //----
+        x_sh[0] = x_data[global_idx];
+        x_buff[idx] = x_sh[0];
+
         if((C & 1) || (idx < C - 1)){ // load it if the array is even or you aren't the last thread
-            x_sh[idx + stride] = x_data[global_idx + stride];
-            x_buff[idx + stride] = x_sh[idx + stride];
+            /*CHANGED HERE*/
+            x_sh[1] = x_data[global_idx + stride];
+            x_buff[idx + stride] = x_sh[1];
         }
     }
     __syncthreads();
@@ -122,10 +128,11 @@ __device__ void dev_block_layer_norm(
             mean = x_buff[0]/ c;
 
         // reusing the buffer in sh mem
-        x_buff[idx] = x_sh[idx]; 
+        /*CHANGED HERE*/
+        x_buff[idx] = x_sh[0]; 
 
         if((C & 1) || (idx < C - 1)){ 
-            x_buff[idx + stride] = x_sh[idx + stride];
+            x_buff[idx + stride] = x_sh[1];
         }
     }
 
@@ -152,10 +159,11 @@ __device__ void dev_block_layer_norm(
         
     // Normalize --> per elem ops
     if(idx < stride){
-        out[global_idx] = (((x_sh[idx] - mean) * hrsqrt( variance + epsilon)) * scale[idx]) + bias[idx] ;        
+        /*CHANGED HERE*/
+        out[global_idx] = (((x_sh[0] - mean) * hrsqrt( variance + epsilon)) * scale[idx]) + bias[idx] ;        
 
         if((C & 1) || (idx < C - 1)){ 
-            out[global_idx + stride] = (((x_sh[idx + stride] - mean) * hrsqrt( variance + epsilon)) * scale[idx + stride]) + bias[idx+ stride] ;
+            out[global_idx + stride] = (((x_sh[1] - mean) * hrsqrt( variance + epsilon)) * scale[idx + stride]) + bias[idx+ stride] ;
         }
     }
         
@@ -281,23 +289,21 @@ __device__ void cub_dev_block_ln(
 __device__ void cub_dev_block_ln(
     u_int idx,u_int global_idx,               // N = B*T (flattened), C = channels
     half * x_data, half * out,      // device pointers
-    half scale, half bias,
-    half epsilon, 
-    cub::BlockReduce<half, CUB_MAX_SH_MEM> &BlockReduce
+    float scale, float bias,
+    float &mean, float &variance,
+    float epsilon, 
+    cub::BlockReduce<float, EMBEDDINGS_SIZE> &BlockReduce
     
 ){
-    half th_data, x_buff;
-    half th_aggregate; // the result is shared across all the threads
-
-    __shared__ half mean;
-    __shared__ half variance;
+    float th_data, x_buff;
+    float th_aggregate; // the result is shared across all the threads
     
-    half c = __int2half_rn(blockDim.x);
+    int c = EMBEDDINGS_SIZE;
 
-    th_data = x_data[global_idx];
+    th_data = __half2float(x_data[global_idx]);
     x_buff = th_data;
 
-    th_aggregate = BlockReduce.Sum(th_data,blockDim.x);
+    th_aggregate = BlockReduce.Sum(th_data, EMBEDDINGS_SIZE);
 
     if(idx == 0)
         mean = th_aggregate / c;
@@ -305,7 +311,7 @@ __device__ void cub_dev_block_ln(
     
     
     th_data = (x_buff - mean) * (x_buff - mean);
-    th_aggregate = BlockReduce.Sum(th_data, blockDim.x);
+    th_aggregate = BlockReduce.Sum(th_data, EMBEDDINGS_SIZE);
         
     if(idx == 0)
         variance = th_aggregate / c;
@@ -313,7 +319,7 @@ __device__ void cub_dev_block_ln(
     __syncthreads();
 
     
-    out[global_idx] = (((x_buff - mean) * hrsqrt( variance + epsilon)) * scale) + bias;        
+    out[global_idx] = __float2half( (((x_buff - mean) * rsqrtf( variance + epsilon)) * scale) + bias);        
         
 
 }
@@ -535,7 +541,7 @@ __global__ void cub_layer_norm(
     th_scale[0] = scale[local_idx]; th_scale[1] = scale[local_idx + blockDim.x];
 
     using BlockReduce = cub::BlockReduce<half, CUB_LAYER_BLOCK_DIM>;
-    __shared__ BlockReduce::TempStorage cub_shared_storage;
+    __shared__  __align__(16) BlockReduce::TempStorage cub_shared_storage;
     BlockReduce block_reduce(cub_shared_storage);
     //Compute the stride between tokens
     // #pragma unroll // This when the token embeddings and the token number is fixed will help a lot
@@ -564,13 +570,15 @@ __global__ void cub_single_layer_norm(
     u_int local_idx = threadIdx.x;
     u_int global_idx = blockIdx.x * blockDim.x * tokens_per_block + local_idx;
     
-    half th_bias, th_scale;
-    
-    th_bias = bias[local_idx];   
-    th_scale = scale[local_idx]; 
+    float th_bias, th_scale;
+    __shared__ float mean;
+    __shared__ float variance;
 
-    using BlockReduce = cub::BlockReduce<half, CUB_MAX_SH_MEM>;
-    __shared__ BlockReduce::TempStorage cub_shared_storage;
+    th_bias  = __half2float(bias[local_idx]);   
+    th_scale = __half2float(scale[local_idx]); 
+
+    using BlockReduce = cub::BlockReduce<float, EMBEDDINGS_SIZE>;
+    __shared__ __align__(16)BlockReduce::TempStorage cub_shared_storage;
     BlockReduce block_reduce(cub_shared_storage);
     //Compute the stride between tokens
     // #pragma unroll // This when the token embeddings and the token number is fixed will help a lot
@@ -581,9 +589,11 @@ __global__ void cub_single_layer_norm(
             local_idx, loop_idx,
             x_data, out,
             th_scale, th_bias,
+            mean, variance,
             epsilon,
             block_reduce
         );
+        __syncthreads();
     }
 }
 
@@ -591,10 +601,11 @@ __global__ void cub_single_layer_norm(
 __global__ void multi_elem_cub_ln(
     half * x_data,      // device pointers
     half * scale, half * bias,      // device pointers
-    half epsilon
+    half epsilon, 
+    u_int tokens_per_block
 ){
     u_int local_idx = threadIdx.x;
-    u_int global_idx = blockIdx.x * EMBEDDINGS_SIZE * TOKENS_PER_BLOCK + local_idx;
+    u_int global_idx = blockIdx.x * EMBEDDINGS_SIZE * tokens_per_block + local_idx;
     
     half th_bias[ELEMENTS_PER_TH], th_scale[ELEMENTS_PER_TH];
     
@@ -604,12 +615,11 @@ __global__ void multi_elem_cub_ln(
     }
 
     using BlockReduce = cub::BlockReduce<half, CUB_LAYER_MULTI_BLOCK_DIM>;
-    __shared__ BlockReduce::TempStorage cub_shared_storage;
+    __shared__ __align__(16) BlockReduce::TempStorage cub_shared_storage;
     BlockReduce block_reduce(cub_shared_storage);
     //Compute the stride between tokens
-    // #pragma unroll // This when the token embeddings and the token number is fixed will help a lot
     u_int loop_idx = 0;
-    for(u_int token = 0; (token < TOKENS_PER_BLOCK); ++token){
+    for(u_int token = 0; (token < tokens_per_block); ++token){
         loop_idx = global_idx + EMBEDDINGS_SIZE * token;        
         dev_multi_elem_cub_ln(
             local_idx, loop_idx,
@@ -641,7 +651,7 @@ __global__ void unrolled_multi_elem_cub_ln(
     }
 
     using BlockReduce = cub::BlockReduce<half, CUB_LAYER_MULTI_BLOCK_DIM>;
-    __shared__ BlockReduce::TempStorage cub_shared_storage;
+    __shared__ __align__(16) BlockReduce::TempStorage cub_shared_storage;
     BlockReduce block_reduce(cub_shared_storage);
     //Compute the stride between tokens
     u_int loop_idx = 0;

@@ -88,6 +88,144 @@ vit_bool Attention::get_use_qk_norm() const {
    return use_qk_norm;
 }
 
+
+linear_data Attention::get_q_gen()
+{
+    linear_data data(
+        q_gen.get_A(),
+        q_gen.get_b(),
+        q_gen.get_in_features(),
+        q_gen.get_out_features(),
+        q_gen.get_use_bias()  
+    );
+    return data;
+}
+
+linear_shape Attention::get_q_gen_shape()
+{
+    int mtx_shape[2];
+    q_gen.get_A_shape(mtx_shape);
+    linear_shape data(
+        mtx_shape[0],
+        mtx_shape[1],
+        q_gen.get_b_dim()
+    );
+    return data;
+}
+
+linear_data Attention::get_k_gen()
+{
+    linear_data data(
+        k_gen.get_A(),
+        k_gen.get_b(),
+        k_gen.get_in_features(),
+        k_gen.get_out_features(),
+        k_gen.get_use_bias()  
+    );
+    return data;
+}
+
+linear_shape Attention::get_k_gen_shape()
+{
+    int mtx_shape[2];
+    k_gen.get_A_shape(mtx_shape);
+    linear_shape data(
+        mtx_shape[0],
+        mtx_shape[1],
+        k_gen.get_b_dim()
+    );
+    return data;
+}
+
+linear_data Attention::get_v_gen()
+{
+    linear_data data(
+        v_gen.get_A(),
+        v_gen.get_b(),
+        v_gen.get_in_features(),
+        v_gen.get_out_features(),
+        v_gen.get_use_bias()  
+    );
+    return data;
+}
+
+linear_shape Attention::get_v_gen_shape()
+{
+    int mtx_shape[2];
+    v_gen.get_A_shape(mtx_shape);
+    linear_shape data(
+        mtx_shape[0],
+        mtx_shape[1],
+        v_gen.get_b_dim()
+    );
+    return data;
+}
+
+layer_data Attention::get_q_norm()
+{
+    layer_data data(
+        q_norm.get_g(),
+        q_norm.get_bias(),
+        q_norm.get_eps(),
+        q_norm.get_use_bias()
+    );
+    return data;
+}
+
+layer_shape Attention::get_q_norm_shape()
+{
+    layer_shape data(      
+        q_norm.get_g_dim(), // get_in_chans() //should be for single element case
+        q_norm.get_g_dim()
+    );
+    return data;
+}
+
+layer_data Attention::get_k_norm()
+{
+    layer_data data(
+        k_norm.get_g(),
+        k_norm.get_bias(),
+        k_norm.get_eps(),
+        k_norm.get_use_bias()
+    );
+    return data;
+}
+
+layer_shape Attention::get_k_norm_shape()
+{
+    layer_shape data(      
+        k_norm.get_g_dim(), // get_in_chans() //should be for single element case
+        k_norm.get_g_dim()
+    );
+    return data;
+}
+
+
+linear_data Attention::get_proj()
+{
+    linear_data data(
+        proj.get_A(),
+        proj.get_b(),
+        proj.get_in_features(),
+        proj.get_out_features(),
+        proj.get_use_bias()  
+    );
+    return data;
+}
+
+linear_shape Attention::get_proj_shape()
+{
+    int mtx_shape[2];
+    proj.get_A_shape(mtx_shape);
+    linear_shape data(
+        mtx_shape[0],
+        mtx_shape[1],
+        proj.get_b_dim()
+    );
+    return data;
+}
+
 void Attention::move_qkv_gen(Linear& _q_gen, Linear& _k_gen, Linear& _v_gen) {
     q_gen = std::move(_q_gen);
     k_gen = std::move(_k_gen);

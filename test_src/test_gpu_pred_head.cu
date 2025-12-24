@@ -1,4 +1,4 @@
-#include "../gpu_include/gpu_proj_head.h"
+#include "../gpu_include/gpu_pred_head.h"
 #include "../include/vision_transformer.h"
 
 u_long new_seed(){
@@ -162,11 +162,11 @@ void gpu_comparison(bool debug){
 
     GpuPredictionHead gpu_ph(
         batch,tokens, embeddings, class_num,
-        cudnn_handle, cublas_handle,
-        stream, d_workspace, false
+        cudnn_handle, cublas_handle,stream
     );
 
-    gpu_ph.set_shared_buffers(d_x, d_t, d_y, d_pred);
+    gpu_ph.init_descriptors();
+    gpu_ph.set_shared_buffers(d_x, d_t, d_y, d_pred, d_workspace);
     gpu_ph.set_shared_weights(d_ln_scale, d_ln_bias, d_lin_w, d_lin_bias);
     
     gpu_ph.tokens_per_block = debug ? 1 : 32;
@@ -183,7 +183,7 @@ void gpu_comparison(bool debug){
     
     cout << "gpu class" << endl; 
     CUDA_CHECK(cudaMemcpyAsync(gpu_x, gpu_ph.d_pred, sizeof(half) * batch * class_num, cudaMemcpyDeviceToHost));
-    
+    cudaStreamSynchronize(stream);
     compare_results(pb, gpu_x, gpu_ph.class_prediction);
 
 }

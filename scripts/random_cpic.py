@@ -3,6 +3,8 @@ import torch
 import random
 import struct
 
+import time 
+
 LABEL_UNSIGNED = 'I'
 LABEL_FLOAT = 'f'
 
@@ -20,6 +22,8 @@ if (len(sys.argv) == 9) :
     min_val = float(sys.argv[7])
     max_val = float(sys.argv[8])
 
+    seed = int(time.time())
+    torch.manual_seed(seed)
     pic = torch.rand(B, C, H, W)
 
     ba = bytearray(b'CPIC')

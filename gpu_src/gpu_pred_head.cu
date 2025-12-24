@@ -1,4 +1,23 @@
-#include "../gpu_include/gpu_proj_head.h"
+#include "../gpu_include/gpu_pred_head.h"
+
+pred_head_weights::pred_head_weights():
+    ln_scale(),
+    ln_bias(),
+    head_weights(),
+    head_bias()
+{}
+
+pred_head_weights::pred_head_weights(
+    half * _ln_scale,   
+    half * _ln_bias,    
+    half * _head_weights,
+    half * _head_bias   
+){
+    ln_scale = _ln_scale;  
+    ln_bias = _ln_bias;
+    head_weights = _head_weights;
+    head_bias = _head_bias;
+}
 
 void softmax_desc::destroy_descriptors(){
     cudnnDestroyTensorDescriptor(x_desc);
@@ -50,9 +69,7 @@ GpuPredictionHead::GpuPredictionHead(
     u_int class_num_,
     cudnnHandle_t &cudnn_handle_,
     cublasLtHandle_t &cublas_handle_,
-    cudaStream_t &stream_,
-    void * d_workspace_,
-    bool allocate
+    cudaStream_t &stream_
 ):
     batch(batch_) ,
     tokens(tokens_) ,
@@ -61,7 +78,6 @@ GpuPredictionHead::GpuPredictionHead(
     cublas_handle(cublas_handle_),
     cudnn_handle(cudnn_handle_),
     stream(stream_),
-    d_workspace(d_workspace_),
     block_dim(embeddings_)
 {
     probabilities_array = vector<float>(batch * class_num);
@@ -70,23 +86,6 @@ GpuPredictionHead::GpuPredictionHead(
     
     gpu_x = (half *)malloc(sizeof(half) * input_elements_number);
     h_x = (float *)malloc(sizeof(float) * input_elements_number);
-
-    if(d_workspace == nullptr){
-        CUDA_CHECK(cudaMallocAsync(&d_workspace, sizeof(half) * MLP_WORKSPACE_SIZE, stream));
-    }
-
-    if(allocate){
-        allocate_ptrs();
-    }
-    mlp_dimensions dim(batch, 1, embeddings, class_num, 0);
-    create_ph_desc(
-        cublas_handle,
-        dim,
-        matmul,
-        algo,
-        softmax,
-        d_workspace
-    );
 }
 
 GpuPredictionHead::~GpuPredictionHead(){
@@ -98,10 +97,7 @@ GpuPredictionHead::~GpuPredictionHead(){
         cudaFree(d_workspace);
     }
     if(destroy_shared_weights){
-        cudaFree(d_ln_scale);
-        cudaFree(d_ln_bias );
-        cudaFree(d_head_weights);
-        cudaFree(d_head_bias);
+        free_weights();
     }
     free(gpu_x);
     free(h_x);
@@ -115,13 +111,33 @@ void GpuPredictionHead::mark_shared_weights(){
     destroy_shared_weights = true;
 }
 
+void GpuPredictionHead::free_weights(){
+    cudaFree(d_ln_scale);
+    cudaFree(d_ln_bias );
+    cudaFree(d_head_weights);
+    cudaFree(d_head_bias);
+    destroy_shared_weights = false;
+}
+
+void GpuPredictionHead::init_descriptors(){
+    mlp_dimensions dim(batch, 1, embeddings, class_num, 0);
+    create_ph_desc(
+        cublas_handle,
+        dim,
+        matmul,
+        algo,
+        softmax,
+        d_workspace
+    );
+}
+
 void GpuPredictionHead::destroy_descriptors(){
     matmul.destroy_descriptors();
     softmax.destroy_descriptors();
 }
 
 
-void GpuPredictionHead::allocate_ptrs(){
+void GpuPredictionHead::allocate_weights(){
     CUDA_CHECK(cudaMallocAsync(&d_ln_scale,     sizeof(half) * embeddings               , stream));
     CUDA_CHECK(cudaMallocAsync(&d_ln_bias,      sizeof(half) * embeddings               ,stream));
     CUDA_CHECK(cudaMallocAsync(&d_head_weights, sizeof(half) * embeddings * class_num, stream));
@@ -156,16 +172,20 @@ void GpuPredictionHead::set_shared_buffers(
     void * d_x_,        
     void * d_t_,        
     void * d_y_,        
-    void * d_pred_    
+    void * d_pred_,
+    void * d_workspace_    
 ){
     d_x = d_x_;
     d_t =    d_t_;   
     d_y =    d_y_;   
     d_pred = d_pred_;
+    assert(d_workspace == nullptr);
+    d_workspace = d_workspace_;
 }
 
 
 void GpuPredictionHead::compute_predictions(){
+    cudaStreamSynchronize(stream);
     f16_to_f32(gpu_x, probabilities_array.data(), batch * class_num);
     for(int i = 0; i < batch; i++){
         class_prediction[i] = argmax(probabilities_array, i * class_num, (i + 1) * class_num);

@@ -15,6 +15,8 @@ TEST_BIN_FOLDER := test_bin
 TEST_OBJ_FOLDER := test_obj
 TEST_SRC_FOLDER := test_src
 
+BENCH_SRC_FOLDER := gpu_benchmark
+
 CPU_COMMON = \
 	$(OBJ_FOLDER)/datatypes.o \
 	$(OBJ_FOLDER)/modules.o \
@@ -25,6 +27,19 @@ CPU_COMMON = \
 	$(OBJ_FOLDER)/patch_embed.o \
 	$(OBJ_FOLDER)/vision_transformer.o \
 	$(OBJ_FOLDER)/utils.o
+
+GPU_COMMON = \
+	$(OBJ_FOLDER)/cuda_utils.o \
+	$(OBJ_FOLDER)/gpu_datatypes.o \
+	$(OBJ_FOLDER)/cudnn_utils.o \
+	$(OBJ_FOLDER)/cudnn_attention.o \
+	$(OBJ_FOLDER)/cudnn_conv2d.o \
+	$(OBJ_FOLDER)/gpu_layer.o \
+	$(OBJ_FOLDER)/gpu_vit.o \
+	$(OBJ_FOLDER)/gpu_mlp.o \
+	$(OBJ_FOLDER)/gpu_patch_embedder.o \
+	$(OBJ_FOLDER)/gpu_block.o \
+	$(OBJ_FOLDER)/gpu_pred_head.o \
 
 GPU_BENCH_FOLDER := gpu_benchmark
 
@@ -154,7 +169,8 @@ $(OBJ_FOLDER)/cudnn_attention.o \
 $(OBJ_FOLDER)/cudnn_conv2d.o \
 $(OBJ_FOLDER)/gpu_block.o \
 $(OBJ_FOLDER)/gpu_patch_embedder.o \
-$(OBJ_FOLDER)/gpu_proj_head.o \
+$(OBJ_FOLDER)/gpu_pred_head.o \
+$(OBJ_FOLDER)/bench_utils.o \
 : $(OBJ_FOLDER)/%.o : $(GPU_SRC_FOLDER)/%.cu
 	nvcc -c $(CUDA_FLAGS) $^ -o $@
 
@@ -176,19 +192,19 @@ obj/cuDNN_BLAS.o : $(CPU_COMMON)
 obj/cudnn_backend_conv:
 	nvcc -std=c++17 test_src/cuDNN_explained.cu -lcudnn -lcuda -o obj/cudnn_backend_conv
 
-# CUDNN single components
 
 $(TEST_OBJ_FOLDER)/test_gpu_mlp.o \
 $(TEST_OBJ_FOLDER)/test_gpu_layer.o \
-$(TEST_OBJ_FOLDER)/test_gpu_vit.o \
 $(TEST_OBJ_FOLDER)/test_cudnn_attention.o \
 $(TEST_OBJ_FOLDER)/test_cudnn_conv2d.o \
 $(TEST_OBJ_FOLDER)/test_gpu_block.o \
 $(TEST_OBJ_FOLDER)/test_gpu_patch_embed.o \
-$(TEST_OBJ_FOLDER)/test_gpu_proj_head.o \
+$(TEST_OBJ_FOLDER)/test_gpu_pred_head.o \
 $(TEST_OBJ_FOLDER)/test_gpu_vit.o \
 : $(TEST_OBJ_FOLDER)/%.o: $(TEST_SRC_FOLDER)/%.cu
 	nvcc -c $(CUDA_FLAGS) $< -o $@
+
+# CUDNN single components
 
 test_bin/test_cudnn_attention.exe \
 test_bin/test_cudnn_conv2d.exe \
@@ -211,7 +227,6 @@ $(CPU_COMMON) \
 $(OBJ_FOLDER)/cuda_utils.o \
 $(OBJ_FOLDER)/gpu_datatypes.o \
 $(OBJ_FOLDER)/gpu_layer.o \
-$(OBJ_FOLDER)/gpu_vit.o \
 $(OBJ_FOLDER)/gpu_mlp.o \
 $(TEST_OBJ_FOLDER)/%.o
 	nvcc $(CUDA_FLAGS) $^ -o $@
@@ -236,13 +251,14 @@ $(OBJ_FOLDER)/cuda_utils.o \
 $(OBJ_FOLDER)/gpu_datatypes.o \
 $(OBJ_FOLDER)/gpu_layer.o \
 $(OBJ_FOLDER)/gpu_mlp.o \
+$(OBJ_FOLDER)/cudnn_utils.o \
 $(OBJ_FOLDER)/cudnn_attention.o \
 $(OBJ_FOLDER)/cudnn_conv2d.o \
 $(OBJ_FOLDER)/gpu_block.o \
 $(TEST_OBJ_FOLDER)/%.o
 	nvcc $(CUDA_FLAGS) $(CUDNN_FLAGS) $^ -o $@
 
-test_bin/test_gpu_proj_head.exe \
+test_bin/test_gpu_pred_head.exe \
 : $(TEST_BIN_FOLDER)/%.exe : \
 $(CPU_COMMON) \
 $(OBJ_FOLDER)/cuda_utils.o \
@@ -250,23 +266,26 @@ $(OBJ_FOLDER)/gpu_datatypes.o \
 $(OBJ_FOLDER)/gpu_layer.o \
 $(OBJ_FOLDER)/gpu_mlp.o \
 $(OBJ_FOLDER)/cudnn_attention.o \
-$(OBJ_FOLDER)/gpu_proj_head.o \
+$(OBJ_FOLDER)/gpu_pred_head.o \
 $(TEST_OBJ_FOLDER)/%.o
 	nvcc $(CUDA_FLAGS) $(CUDNN_FLAGS) $^ -o $@
 
 test_bin/test_gpu_vit.exe \
 : $(TEST_BIN_FOLDER)/%.exe : \
 $(CPU_COMMON) \
-$(OBJ_FOLDER)/cuda_utils.o \
-$(OBJ_FOLDER)/gpu_datatypes.o \
-$(OBJ_FOLDER)/cudnn_utils.o \
-$(OBJ_FOLDER)/cudnn_attention.o \
-$(OBJ_FOLDER)/cudnn_conv2d.o \
-$(OBJ_FOLDER)/gpu_layer.o \
-$(OBJ_FOLDER)/gpu_vit.o \
-$(OBJ_FOLDER)/gpu_mlp.o \
-$(OBJ_FOLDER)/gpu_patch_embedder.o \
-$(OBJ_FOLDER)/gpu_block.o \
-$(OBJ_FOLDER)/gpu_proj_head.o \
+$(GPU_COMMON) \
+$(TEST_OBJ_FOLDER)/%.o
+	nvcc $(CUDA_FLAGS) $(CUDNN_FLAGS) $^ -o $@
+
+
+$(TEST_OBJ_FOLDER)/layer_norm_bench.o \
+: $(TEST_OBJ_FOLDER)/%.o: $(BENCH_SRC_FOLDER)/%.cu
+	nvcc -c $(CUDA_FLAGS) $< -o $@
+
+test_bin/layer_norm_bench.exe \
+: $(TEST_BIN_FOLDER)/%.exe : \
+$(CPU_COMMON) \
+$(GPU_COMMON) \
+$(OBJ_FOLDER)/bench_utils.o \
 $(TEST_OBJ_FOLDER)/%.o
 	nvcc $(CUDA_FLAGS) $(CUDNN_FLAGS) $^ -o $@

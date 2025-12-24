@@ -170,7 +170,7 @@ vit_float * VisionTransformer::get_conv2d_bias() {
     return patch_embed.get_conv2d_bias();
 }
 
-void VisionTransformer::move_cls_token(RowVector _cls_token) {
+void VisionTransformer::move_cls_token(RowVector &_cls_token) {
     cls_token = std::move(_cls_token);
 }
 
@@ -178,11 +178,11 @@ void VisionTransformer::move_reg_token(Matrix _reg_token) {
     reg_token = std::move(_reg_token);
 }
 
-void VisionTransformer::move_pos_embed(Matrix _pos_embed) {
+void VisionTransformer::move_pos_embed(Matrix &_pos_embed) {
     pos_embed = std::move(_pos_embed);
 }
 
-void VisionTransformer::move_patch_embed(PatchEmbed _patch_embed) {
+void VisionTransformer::move_patch_embed(PatchEmbed &_patch_embed) {
     patch_embed = std::move(_patch_embed);
 }
 

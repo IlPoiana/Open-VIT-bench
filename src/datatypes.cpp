@@ -107,10 +107,11 @@ blocks_data::blocks_data(vit_size i_dim, vit_size num_h, vit_float mlp_r, layer_
 // {
 // }
 
-blocks_shape::blocks_shape(layer_shape norm1_s, attn_shape attention_s, mlp_shape mlp_s, layer_shape norm2_s) : norm1_shape(norm1_s.g_size, norm1_s.bias_size),
-                                                                                                                norm2_shape(norm2_s.g_size, norm2_s.bias_size),
-                                                                                                                attention_shape(attention_s.q_gen_shape, attention_s.k_gen_shape, attention_s.v_gen_shape, attention_s.q_norm_shape, attention_s.k_norm_shape, attention_s.proj_shape),
-                                                                                                                mlperc_shape(mlp_s.fc1_shape, mlp_s.norm_shape, mlp_s.fc2_shape)
+blocks_shape::blocks_shape(layer_shape norm1_s, attn_shape attention_s, mlp_shape mlp_s, layer_shape norm2_s) : 
+    norm1_shape(norm1_s.g_size, norm1_s.bias_size),
+    norm2_shape(norm2_s.g_size, norm2_s.bias_size),
+    attention_shape(attention_s.q_gen_shape, attention_s.k_gen_shape, attention_s.v_gen_shape, attention_s.q_norm_shape, attention_s.k_norm_shape, attention_s.proj_shape),
+    mlperc_shape(mlp_s.fc1_shape, mlp_s.norm_shape, mlp_s.fc2_shape)
 {}
 
 

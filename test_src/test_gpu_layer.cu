@@ -3,7 +3,7 @@
 #include <bits/stdc++.h>
 #include <curand_kernel.h>
 
-#define BATCH 8
+#define BATCH 4
 
 __global__ void generate_reference(float * x){
     u_int idx = blockDim.x * blockIdx.x + threadIdx.x;
@@ -188,7 +188,6 @@ void gpu_comparison(){
 
     Tensor y(x_data,total_elements_num, BATCH, TOKENS_NUM, EMBEDDINGS_SIZE);
     ln(y);
-    // y.print();
     float * cpu_y = (float *)malloc(sizeof(float) * total_elements_num);
     cpu_y = y.get_data();
 
@@ -240,8 +239,8 @@ void gpu_comparison(){
 
     // -- 4) GPU-3 + multi element per thread(not fixed at two)
     CUDA_CHECK(cudaMemcpy(d_x, gpu_x.data, sizeof(half) * total_elements_num, cudaMemcpyHostToDevice));
-    
-    multi_elem_cub_ln<<<block_number, CUB_LAYER_MULTI_BLOCK_DIM>>>(d_x, d_scale, d_bias, gpu_epsilon);
+    assert(BATCH % TOKENS_PER_BLOCK == 0);
+    multi_elem_cub_ln<<<block_number, CUB_LAYER_MULTI_BLOCK_DIM>>>(d_x, d_scale, d_bias, gpu_epsilon, TOKENS_PER_BLOCK);
     
     CUDA_CHECK(cudaMemcpy(gpu_y, d_x, sizeof(half) * total_elements_num, cudaMemcpyDeviceToHost));
     difference = result_check_fp16(gpu_y, cpu_y, total_elements_num);
@@ -254,6 +253,18 @@ void gpu_comparison(){
     CUDA_CHECK(cudaMemcpy(gpu_y, d_x, sizeof(half) * total_elements_num, cudaMemcpyDeviceToHost));
     difference = result_check_fp16(gpu_y, cpu_y, total_elements_num);
     cout << "GPU UNROLLED CUB MULTI avg. difference: " << to_percentage(difference) << endl;
+
+    // -- 6) GPU-5: single thread cub reduction, multi token per block (dev purpose)
+    CUDA_CHECK(cudaMemcpy(d_x, gpu_x.data, sizeof(half) * total_elements_num, cudaMemcpyHostToDevice));
+    
+    block_number = total_elements_num / (EMBEDDINGS_SIZE *  TOKENS_PER_BLOCK);
+    assert((total_elements_num % (EMBEDDINGS_SIZE *  TOKENS_PER_BLOCK))== 0);
+    cub_single_layer_norm<<<block_number, EMBEDDINGS_SIZE>>>(d_x, d_x, d_scale, d_bias, gpu_epsilon, TOKENS_PER_BLOCK);
+    
+    CUDA_CHECK(cudaMemcpy(gpu_y, d_x, sizeof(half) * total_elements_num, cudaMemcpyDeviceToHost));
+    difference = result_check_fp16(gpu_y, cpu_y, total_elements_num);
+    cout << "GPU SINGLE LAYER NORM avg. difference: " << to_percentage(difference) << endl;
+
 
     cudaFree(d_x); cudaFree(d_y); cudaFree(d_bias); cudaFree(d_scale);
     return;

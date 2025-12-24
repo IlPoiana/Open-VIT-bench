@@ -581,15 +581,15 @@ void gpu_comparison(bool fused_mlp){
     // u_int batch = 2,tokens = 10,channels = 24,hidden = 48;
     // u_int batch = 2,tokens = 4,channels = 10,hidden = 20;
     // u_int batch = 2,tokens = 10,channels = 48,hidden = 96;    
-    u_int batch = 16,tokens = 197,channels = 768,hidden = 3072;
-    double epsilon = 1e-4;//1e-5;
-    float scale = 0.1f;// 4 * 1e-5;
+    u_int batch = 4,tokens = 197,channels = 768,hidden = 3072;
+    double const epsilon = 1e-5;
+    float scale = 1.0f;// 4 * 1e-5;
     int num_heads = 12; 
     
     bool debug = true;
     if(debug){
-        batch = 2,tokens = 4,channels = 10,hidden = 20;
-        num_heads = 5;
+        batch = 4,tokens = 4,channels = 768, hidden = 40;
+        num_heads = 12;
     }   
 
     u_int input_elements_number = batch * tokens * channels;
@@ -601,14 +601,6 @@ void gpu_comparison(bool fused_mlp){
 
     //Descriptors
     bool attn_init = false; //false == Initialize randomly the attn_descriptor
-    cudaStream_t stream;
-    cublasLtHandle_t ltHandle;
-    cudnnHandle_t cudnnHandle;
-    attn_cuDNN_descriptors fused_desc; /*MHA cuDNN descriptors*/
-    cublasLt_matmul_desc matmul[2]; cublasLtMatmulAlgo_t algo[2]; /*MLP descriptors*/
-    cublasLtMatrixTransformDesc_t transposeDesc; /*MLP Transpose descriptors*/
-    cublasLtMatrixLayout_t mlp_out_desc; cublasLtMatrixLayout_t ln_in_desc ;
-
 
     //Generate all the descriptors, except attn (need weights for cuDNN)
     if(debug) cout << "constructor" << endl;
@@ -618,23 +610,10 @@ void gpu_comparison(bool fused_mlp){
         epsilon, scale, num_heads
     );
 
-    //To reuse the already instatiated descriptors
-    if(debug) cout << "get" << endl;
-    gpu_block.get_descriptors(
-        stream,
-        ltHandle,
-        cudnnHandle,
-        fused_desc, /*MHA cuDNN descriptors*/
-        matmul, algo, /*MLP descriptors*/
-        transposeDesc, /*MLP Transpose descriptors*/
-        mlp_out_desc, ln_in_desc 
-    );
-
     //Generate random data for all the weights in the encoder block, initialize also the cuDNN attn weights descriptor
     if(debug) cout << "random gen"<< endl;
     gpu_block.random_data(attn_init);
     gpu_block.download_x(h_x.data()); //for debug purposes
-    
     if(debug) cout << "cpu x tensor" << endl;
     Tensor x(h_x.data(), input_elements_number, batch, tokens, channels);
     if(debug)  x.print();
@@ -654,65 +633,14 @@ void gpu_comparison(bool fused_mlp){
     gpu_block.to_CPU(cpu_block, debug);
     
     cpu_block.forward(x,y);
-    if(debug) y.print();
+    if(debug) {
+        Tensor gpu_x(h_x.data(), input_elements_number, batch, tokens, channels);
+        cout << "gpu output" << endl; gpu_x.print();
+        y.print();
+    }
     cout << "First block difference" << compare_results(y, h_x.data()) << endl;
-
-    if(debug) cout << "second encoder block" << endl;
-    //Initialize the block with the already initialized device pointers (d_x, d_h, d_t, d_y)
-    void * d_x, * d_h, *d_t, * d_y;
-    d_x = gpu_block.d_x; d_h = gpu_block.d_h; d_t = gpu_block.d_t; d_y = gpu_block.d_y;
-    GpuBlock block_2(
-        batch, tokens, channels, hidden,
-        d_x,d_h,d_t,d_y,
-        fused_mlp,
-        epsilon, scale, num_heads, 0.1f
-    );
-
-
-    block_2.stream = stream;
-    block_2.ltHandle = ltHandle;
-    block_2.cudnnHandle = cudnnHandle;
-    block_2.fused_desc = fused_desc;
-    block_2.set_matmul_descriptors(matmul, algo, gpu_block.d_workspace_mlp);
-    block_2.transposeDesc = transposeDesc;
-    block_2.mlp_out_desc = mlp_out_desc;
-    block_2.res_in_desc = ln_in_desc;
-
-    block_2.random_data(attn_init, false); //don't overwrite d_x i want to use precedent block data
-
-    /*CPU REF*/
-    Block cpu_block_2(channels, num_heads, hidden / channels, true, false, scale, GELU);
-    
-    if(debug) cout << "to CPU" << endl;
-    block_2.to_CPU(cpu_block_2, debug);
-    block_2.download_x(h_x.data());
-    Tensor x2(h_x.data(), input_elements_number, batch, tokens, channels);
-    Tensor y2(batch,tokens,channels);
-    //----
-    
-    if(debug) cout << "second forward" << endl;
-    block_2.forward(debug);
-    
-    if(debug)cout << "CPU forward" << endl;
-    cpu_block_2.forward(x2,y2);
-    if(debug) y2.print();
-
-    block_2.download_x(h_x.data());
-    cout << "Second block difference: " << compare_results(y2, h_x.data())<< endl;
-
-    block_2.set_last_block();
-    block_2.mark_shared_buffers(); //Tell to the destructor to free device pointers
-
-
-    /*
-    GpuBlock block1(block0); //passing all the descriptors and shapes
-    block1.set_data(data) or block1.random_data(true, false); // Initializing all the weights and the missing descriptor
-    block1.init_attn_descriptor();
-    block1.set_last_block();
-
-    block0.forward();
-    block1.forward();
-    */
+    gpu_block.mark_shared_weights();
+    gpu_block.mark_shared_buffers(); //Tell to the destructor to free device pointers
 }
 
 int main() {

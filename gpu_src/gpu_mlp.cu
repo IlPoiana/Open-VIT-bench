@@ -24,10 +24,10 @@ mlp_dimensions::mlp_dimensions(u_int _B, u_int _T,u_int _C,u_int _K,u_int _M){
  * @param row
  * @param col
  */
-void bias_matrix(half * d_b, half * d_b_mtx, u_int row, u_int col){
+void bias_matrix(half * h_b, half * h_b_mtx, u_int row, u_int col){
     for(u_int r = 0; r < row; r++){
         for(u_int c = 0; c < col; c++){
-            d_b_mtx[r * col + c] = d_b[r];
+            h_b_mtx[r * col + c] = h_b[r];
         }
     }
     return;
@@ -205,8 +205,8 @@ cublasLtMatmulAlgo_t fetch_matmul_algos(cublasLtHandle_t &handle,cublasLt_matmul
     cublasLtMatmulHeuristicResult_t heur_array[requested_count];
 
     cublasLtMatmulPreference_t preference; CUBLAS_CHECK(cublasLtMatmulPreferenceCreate(&preference));
-    size_t workspace_size = MLP_WORKSPACE_SIZE;
-
+    
+    size_t workspace_size = WORKSPACE_SIZE;
     CUBLAS_CHECK(cublasLtMatmulPreferenceSetAttribute(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workspace_size, sizeof(workspace_size)));
 
     CUBLAS_CHECK(cublasLtMatmulAlgoGetHeuristic(
@@ -366,7 +366,7 @@ void linear_layer(
 }
 
 /*
-0) We passed the already instantiate matmul descriptor, the algorithm to perform and the workspace.
+1) Strided version for the bias of the linear layer. Used in GpuViT
 */
 void strided_linear_layer(
     cublasLtHandle_t & handle, cudaStream_t & stream,

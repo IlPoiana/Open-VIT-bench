@@ -1,141 +1,181 @@
 #include "../include/vision_transformer.h"
-#include "../gpu_include/gpu_datatypes.h"
 #include "../include/utils.h"
 
-class GpuViT {
-private:
-    // vit_size num_classes;
-    // pool_type global_pool;
-    // vit_size embed_dim;
-    // vit_size depth;
+#include "../gpu_include/gpu_patch_embedder.h"
+#include "../gpu_include/gpu_block.h"
+#include "../gpu_include/gpu_pred_head.h"
 
-    // vit_bool has_class_token;
-    // vit_size num_reg_tokens;
-    // vit_size num_prefix_tokens;
-    // vit_bool no_embed_class;
+patch_emb_weights convert_patch_emb(VisionTransformer &cpu_vit);
 
-    // vit_bool use_pos_embed;
-    // vit_bool use_pre_norm;
-    // vit_bool use_fc_norm;
-    // vit_bool dynamic_img_size;
+void convert_blocks( VisionTransformer &cpu_vit, vector<block_weights> &blk_w);
 
-    // RowVector cls_token;
-    // Matrix reg_token;
-    // Matrix pos_embed;
+pred_head_weights convert_pred_head(VisionTransformer &cpu_vit);
 
-    // PatchEmbed patch_embed;
-    // LayerNorm pre_norm; // subjected to use_pre_norm
-    // std::vector<Block> blocks;
-    // LayerNorm norm; // subjected to not use_fc_norm
-    // LayerNorm fc_norm; // subjected to use_fc_norm
-    // Linear head;
-public:
-    GpuViT(
-        vit_size img_size_h = 224,
-        vit_size img_size_w = 224,
-        vit_size patch_size_h = 16,
-        vit_size patch_size_w = 16,
-        vit_size in_chans = 3,
-
-        vit_size _num_classes = 1000,
-        pool_type _global_pool = pool_token,
-        vit_size _embed_dim = 768,
-        vit_size _depth = 12,
-
-        vit_size num_heads = 12,
-        vit_float mlp_ratio = 4,
-        vit_bool use_qkv_bias = true,
-        vit_bool use_qk_norm = false,
-        vit_float scale_val = 1.0,
-
-        vit_bool _has_class_token = true,
-        vit_size _num_reg_tokens = 0,
-        vit_bool _no_embed_class = false,
-
-        vit_bool _use_pos_embed = true,
-        vit_bool _use_pre_norm = false,
-        vit_bool _use_fc_norm = false,
-
-        vit_bool _dynamic_img_size = false,
-        vit_bool dynamic_img_pad = false,
-        vit_float (*act)(vit_float val) = GELU
-    );
-
-    GpuViT(VisionTransformer & vit);
-    //TO DO, change the output type
-    void forward(__half pic_data, picture_shape pic_shape, vit_float * output);
-
-    // VisionTransformer& operator= (const VisionTransformer& vit) = delete;
-    // VisionTransformer& operator= (VisionTransformer&& vit);
-
-    // vit_size get_num_classes() const;
-    // pool_type get_global_pool() const;
-    // vit_size get_embed_dim() const;
-    // vit_size get_depth() const;
-
-    // vit_bool get_has_class_token() const;
-    // vit_size get_num_reg_tokens() const;
-    // vit_size get_num_prefix_tokens() const;
-    // vit_bool get_no_embed_class() const;
-
-    // vit_bool get_use_pos_embed() const;
-    // vit_bool get_use_pre_norm() const;
-    // vit_bool get_use_fc_norm() const;
-    // vit_bool get_dynamic_img_size() const;
-    // //Patch Embedder
-    // vit_float * get_conv2d_kernel();
-    // vit_float * get_conv2d_bias();
-    // void get_kernel_shape(int kernel_shape[6]);
-    // layer_data get_patch_layer_norm();
-    // layer_shape get_patch_layer_shape();
-    
-    // vit_float *  get_cls_token();
-    // vit_size get_cls_token_shape();
-    
-    // vit_float * get_reg_token();
-    // void get_reg_token_shape(int reg_token_shape[2]);
-    // vit_float * get_pos_embed();
-    // void get_pos_embed_shape(int pos_embed_shape[2]);
+// `blk_w`: is a pointer(non-initialized), it will point an array of depth size (number of encoder blocks)
+void convert_vit_weights(
+    VisionTransformer &vit,
+    patch_emb_weights &pe_w,
+    vector<block_weights> &blk_w,
+    pred_head_weights &ph_w
+);
 
 
-    // layer_data get_pre_norm(); // TO DO
-    // layer_shape get_pre_norm_shape();
-    // layer_data get_norm(); // TO DO
-    // layer_shape get_norm_shape();
-    // layer_data get_fc_norm();// TO DO
-    // layer_shape get_fc_norm_shape();
+/**
+ * @brief Inference ViT implementation, supporting single or multi stream execution
+ * 
+ */
+class GpuVit {
+    private:
+        convolution_dim conv_dim;
+        int tokens;
+        u_int input_pic_elements_num;
+        u_int embedded_elements_num; // [B,T,E]
+        u_int hidden_elements_number;
 
+        double block_epsilon = 1e-6;
+        double pred_head_epsilon = 1e-6;
 
+        float block_scale = 1.0f;
 
-    // void get_blocks(blocks_data data[]);
-    // void get_blocks_shape(blocks_shape shapes[]);
-    
-    // linear_data get_head();
-    // linear_shape get_head_shape();
+        void set_class_buffers();
 
-    
-    // void move_cls_token(RowVector _cls_token);
-    // void move_reg_token(Matrix _reg_token);
-    // void move_pos_embed(Matrix _pos_embed);
+    public:
+        cudaStream_t     stream;
+        cudnnHandle_t    cudnn_handle;
+        cublasLtHandle_t cublas_handle;
 
-    // void move_patch_embed(PatchEmbed _patch_embed);
-    // void move_pre_norm(LayerNorm _pre_norm);
-    // void move_blocks(std::vector<Block> _blocks);
-    // void move_norm(LayerNorm _norm);
-    // void move_fc_norm(LayerNorm _fc_norm);
-    // void move_head(Linear _head);
+        vit_size batch = 1;
+        vit_size img_h = 224;
+        vit_size img_w = 224;
+        vit_size patch_h  = 16;
+        vit_size patch_w  = 16;
+        vit_size channels = 3;
+        vit_size embeddings = 768;
+ 
+        vit_size  depth;        
+        vit_size  num_heads;
+        vit_float scale_val;
+        vit_size num_classes;
 
-    // void reset_classifier(Linear _head, vit_size _num_classes, pool_type _global_pool);
+        void * d_pic    ; //[B,C,H,W]
+        void * d_x      ; //[B,T,E]
+        void * d_t      ; //[B,T,E]
+        void * d_y      ; //[B,T,E]
+        void * d_h      ; //[B,T,K]
+        void * d_workspace = nullptr;
 
-    // void to_ofstream(std::ofstream& os) const;
-    // void from_ifstream(std::ifstream& is);
+        GpuPatchEmbedder  pe;
+        GpuPredictionHead ph;
+        vector<GpuBlock>  blocks;          
 
-    // void position_embed(const Tensor& x_in, Tensor& x_out) const;
-    // void forward_features(const PictureBatch& p_in, Tensor& x_out) const;
-    // void pool(const Tensor& x_in, Tensor& x_out) const;
-    // void forward_head(const Tensor& x_in, Tensor& x_out) const;
+        /**
+         * @brief 
+         * 
+         */
+        GpuVit(
+            cudaStream_t     &_stream,
+            cudnnHandle_t    &_cudnn_handle,
+            cublasLtHandle_t &_cublas_handle,
 
-    // void forward(const PictureBatch& pic, PredictionBatch& pred) const;
+            convolution_dim _conv_dim,
 
-    // void timed_forward(const PictureBatch& pic, PredictionBatch& pred, RowVector& times) const;
+            vit_size _tokens = 196,
+            vit_size _num_classes = 1000,
+            vit_size _depth = 12,
+            vit_size  _num_heads = 12,
+            vit_float _scale_val = 1.0,
+            vit_size mlp_hidden = 3072,
+
+            vit_bool init_pe_descriptors = true,
+            vit_bool allocate_pe_shared_ptrs = true, //initialize the weights shared pointers
+
+            vit_bool block_mlp_kernel_type = true,
+            vit_bool init_block_descriptors = true,
+            vit_bool allocate_blocks_shared_ptrs = true //initialize the weights shared pointers
+        );
+
+        // 0) Allocate on device the buffers used in all the ops
+        void allocate_shared_buffers();
+
+        // 1) Create all the descriptors for all the library functions used(cuBLAS and cuDNN)
+        void create_descriptors();
+
+        // 2) Allocate on device the buffers for the weights, also the workspace used for this block
+        void allocate_weights();
+
+        // 3) Load all the weights for each component to the device
+        void load_weights(
+            patch_emb_weights &pe_w,
+            vector<block_weights> &blk_w,
+            pred_head_weights &ph_w
+        );
+
+        // 4) Load the input data to the model
+        void load_pics(half * pics);
+        
+        /* 5) Forward of the model, starts from d_pic result in d_x!
+        */
+        virtual void forward();
+        
+        void print_dimensions();
+
+        void print_predictions(bool debug = false);
+        
+        void free_weights();
+        
+        void free_buffers();
+        
+        void destroy_descriptors();
+
+        
+};
+
+class GpuVitBasePatch16_224 : public GpuVit{
+    public:
+        const int _img_w = 224, _img_h = 224; 
+        const int _Ho    = 16 , _Wo    = 16 ;
+        const int _channels   = 3;
+        const int _embeddings = 768;
+        const int _tokens     = 196;
+        const int _depth      = 12;
+        const int _num_heads  = 12;
+        const int _mlp_hidden = 3072;
+        const double _epsilon = 1e-5;
+        const bool _mlp_kernel_type = true; //TO CHECK what is better
+
+        GpuVitBasePatch16_224(
+            cudaStream_t     &_stream,
+            cudnnHandle_t    &_cudnn_handle,
+            cublasLtHandle_t &_cublas_handle,
+            int _batch,
+            int _num_classes,
+            vit_float _scale_val = 1.0
+        ):
+        GpuVit(
+            _stream,
+            _cudnn_handle,
+            _cublas_handle,
+            convolution_dim(
+                _batch,
+                _channels,
+                _img_h,
+                _img_w,
+                _embeddings,
+                _Ho,
+                _Wo
+            ),
+            _tokens,
+            _num_classes,
+            _depth,     
+            _num_heads, 
+            _scale_val,
+            _mlp_hidden,
+            false,
+            false,
+            _mlp_kernel_type,
+            false,
+            false
+        ){}
+
+        void forward(){} // TO DO
 };

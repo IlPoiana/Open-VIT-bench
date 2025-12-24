@@ -1,3 +1,4 @@
+#pragma once
 #include "./gpu_datatypes.h"
 #include <cub/cub.cuh>
 
@@ -12,8 +13,6 @@
     
 #define CUB_LAYER_BLOCK_DIM EMBEDDINGS_SIZE / 2 // (384 * 2 = 768)a multiple of 768 [384, 192, 96, 48, 24, 12, 6, 3] 
 #define CUB_LAYER_MULTI_BLOCK_DIM EMBEDDINGS_SIZE / ELEMENTS_PER_TH
-
-#define CUB_MAX_SH_MEM 1024 
 
 /*
 DEVICE KERNELS/FUNCTIONS
@@ -76,7 +75,8 @@ __global__ void cub_single_layer_norm(
 __global__ void multi_elem_cub_ln(
     half * x_data,      
     half * scale, half * bias,      //All device pointers
-    half epsilon
+    half epsilon,
+    u_int tokens_per_block
 );
 
 __global__ void unrolled_multi_elem_cub_ln(

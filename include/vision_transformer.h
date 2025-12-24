@@ -77,6 +77,7 @@ public:
     pool_type get_global_pool() const;
     vit_size get_embed_dim() const;
     vit_size get_depth() const;
+    void get_img_size(vit_size &height, vit_size &width) const;
 
     vit_bool get_has_class_token() const;
     vit_size get_num_reg_tokens() const;
@@ -146,6 +147,15 @@ public:
     void forward(const PictureBatch& pic, PredictionBatch& pred) const;
 
     void timed_forward(const PictureBatch& pic, PredictionBatch& pred, RowVector& times) const;
+
+    void print();
+
+    /**
+     * @brief 
+     * - `idx`: what block to print
+     * - `what`: 0 norm1 1 attn 2 ls1 3 norm2 4 mlp 5 ls2
+     */
+    void print_block(int idx, int what);
 };
 
 

@@ -144,10 +144,7 @@ void cudnn_conv2d_test(half * h_x, half * h_w, half * h_y, convolution_dim dim){
     void * d_out; CUDA_CHECK(cudaMalloc(&d_out,sizeof(half)* y_b * y_c * y_h* y_w));
     int block_dim = 256, blocks_n = y_b * y_c * y_h* y_w;
     transpose_tensor3d<<<blocks_n, block_dim>>>((half*)d_y,(half*)d_out,y_b,y_c,y_h * y_w);
-    // TO REMOVE works
-    // int block_dim = 4, blocks_n = 4;
-    // transpose_strided_tensor3d<<<blocks_n, block_dim>>>((half*)d_y,(half*)d_out,y_b,y_c,y_h * y_w);
-    //-----
+
     CUDA_CHECK(cudaMemcpy(h_y, d_out,sizeof(half) * batch * embeddings * y_height * y_width ,cudaMemcpyDeviceToHost));
 
 }
