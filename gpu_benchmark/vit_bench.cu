@@ -6,6 +6,8 @@
 2) BENCHMARK: How much time for a single inference pass?
 
 3) BENCHMARK: How much time takes for the model to process a dataset?
+
+4) BENCHMARK: How much time for a multi stream vs a single stream inference pass?
 */
 
 //Do WARM UP and then  N runs to take the times 

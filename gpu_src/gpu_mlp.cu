@@ -19,8 +19,8 @@ mlp_dimensions::mlp_dimensions(u_int _B, u_int _T,u_int _C,u_int _K,u_int _M){
 /**
  * @brief 
  * 
- * @param d_b 1xrow row-major bias vector 
- * @param d_b_mtx rowxcol col-major bias matrix
+ * @param h_b 1xrow row-major bias vector 
+ * @param h_b_mtx rowxcol col-major bias matrix
  * @param row
  * @param col
  */
@@ -288,49 +288,6 @@ void create_mlp_descriptors(
 
 
 /*
-0) GEMM + BIAS
-*/
-void linear_layer(
-    cublasLtHandle_t & handle, cudaStream_t & stream,
-    u_int B, u_int T, u_int C, u_int K,
-    void * d_x, void * d_fc, void * d_b, 
-    void * d_y, bool gelu
-){
-
-    cublasLt_matmul_desc matmul;
-    create_cublasLt_linlay_desc(
-        B,T,C,K,
-        matmul
-    );
-
-    void * d_workspace;
-    cublasLtMatmulAlgo_t algo = fetch_matmul_algos(handle, matmul, &d_workspace);
-
-    
-    CUBLAS_CHECK(cublasLtMatmul(
-        handle, matmul.matmulDesc, &matmul.alpha,
-        d_x, matmul.xDesc,
-        d_fc, matmul.fcDesc,
-        &matmul.beta,
-        d_y, matmul.cDesc,
-        d_y, matmul.yDesc,
-        &algo, d_workspace, (size_t)MLP_WORKSPACE_SIZE, stream
-    ));
-    // CUDA_CHECK(cudaStreamSynchronize(stream));
-
-    u_int block_dim = 256;
-    u_int block_num = ((B*T*K) / block_dim) + 1;
-    if(gelu)
-        bias_GELU<<<block_num,block_dim,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
-    else    
-        bias<<<block_num,block_dim,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-
-    return;
-
-}
-
-/*
 0) We passed the already instantiate matmul descriptor, the algorithm to perform and the workspace.
 */
 void linear_layer(
@@ -353,12 +310,11 @@ void linear_layer(
     ));
     // CUDA_CHECK(cudaStreamSynchronize(stream));
 
-    u_int block_dim = 256;
-    u_int block_num = ((B*T*K) / block_dim) + 1;
+    u_int block_num = ((B*T*K) / MLP_BLOCK_DIM) + 1;
     if(gelu)
-        bias_GELU<<<block_num,block_dim,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
+        bias_GELU<<<block_num, MLP_BLOCK_DIM,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
     else    
-        bias<<<block_num,block_dim,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
+        bias<<<block_num, MLP_BLOCK_DIM,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
     return;
@@ -388,53 +344,15 @@ void strided_linear_layer(
     ));
     // CUDA_CHECK(cudaStreamSynchronize(stream));
 
-    u_int block_dim = 256;
-    u_int block_num = ((B*T*K) / (stride_val * block_dim)) + 1;
+    u_int block_num = ((B*T*K) / (stride_val * MLP_BLOCK_DIM)) + 1;
     if(gelu)
-        bias_GELU<<<block_num,block_dim,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
+        bias_GELU<<<block_num, MLP_BLOCK_DIM,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
     else    
-        bias<<<block_num,block_dim,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
+        bias<<<block_num, MLP_BLOCK_DIM,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
     // CUDA_CHECK(cudaStreamSynchronize(stream));
 
     return;
 
-}
-
-/**
- * @brief 
- * d_b has to be a matrix in col-major! (required by cuBLAS for having a fused bias + epilogue working)
- * @param gelu 
- * @param memory_order: if true, the x matrix will be in row-major, other wise will be in col-major
- */
-void fused_linear_layer(
-    cublasLtHandle_t &handle, cudaStream_t & stream,
-    u_int B, u_int T, u_int C, u_int K,
-    void * d_x, void * d_fc, void * d_b, 
-    void * y, bool gelu, bool memory_order
-){
-
-    cublasLt_matmul_desc matmul;
-
-    create_cublasLt_linlay_desc(
-        B, T, C, K,
-        matmul, 
-        gelu, memory_order
-    );
-
-    void * d_workspace;
-    cublasLtMatmulAlgo_t algo = fetch_matmul_algos(handle, matmul, &d_workspace);
-
-    CUBLAS_CHECK(cublasLtMatmul(
-        handle, matmul.matmulDesc, &matmul.alpha,
-        d_x, matmul.xDesc,
-        d_fc, matmul.fcDesc,
-        &matmul.beta,
-        d_b, matmul.cDesc,
-        y, matmul.yDesc,
-        &algo, d_workspace, (size_t)MLP_WORKSPACE_SIZE, stream
-    ));
-    // CUDA_CHECK(cudaStreamSynchronize(stream)); //not necessary cause on the same stream
-    return;
 }
 
 /**
@@ -495,18 +413,18 @@ void gpu_mlp(
     u_int B, u_int T, u_int K,u_int M,
     cublasLt_matmul_desc * matmul,cublasLtMatmulAlgo_t * algo,void * d_workspace,
     void * d_x, void * d_fc1, void * d_h,void * d_b1, void * d_fc2, void * d_b2, 
-    void * d_y
+    void * d_y, int stride_val
 ){
     strided_linear_layer(
         handle,stream, 
-        B,  T, K, 2,
+        B,  T, K, stride_val,
         matmul[0], algo[0], d_workspace,
         d_x, d_fc1, d_b1, d_h, 
         true
     );
     strided_linear_layer(
         handle,stream,
-        B,  T, M, 2,
+        B,  T, M, stride_val,
         matmul[1], algo[1], d_workspace,
         d_h, d_fc2, d_b2, d_y,
         false
@@ -514,30 +432,6 @@ void gpu_mlp(
     return;
 }
 
-
-/*
-Fused MLP
-*/
-void fused_gpu_mlp(
-    cublasLtHandle_t & handle, cudaStream_t & stream,
-    u_int B, u_int T, u_int C, u_int K,u_int M,
-    void * d_x, void * d_fc1, void * d_h,void * d_b1, void * d_fc2, void * d_b2, 
-    void * d_y
-){
-    fused_linear_layer(
-        handle,stream, 
-        B,  T,  C,  K,
-        d_x, d_fc1, d_b1, d_h,
-        true,true
-    );
-    fused_linear_layer(
-        handle,stream,
-        B,  T,  K,  M,
-        d_h, d_fc2, d_b2, d_y,
-        false, false
-    );
-    return;
-}
 
 /**
  * @brief 
@@ -562,7 +456,115 @@ void fused_gpu_mlp(
     return;
 }
 
-// -- DEV phase functions --
+/*
+-- DEV phase functions --
+*/
+
+
+/*
+0) GEMM + BIAS
+*/
+void linear_layer(
+    cublasLtHandle_t & handle, cudaStream_t & stream,
+    u_int B, u_int T, u_int C, u_int K,
+    void * d_x, void * d_fc, void * d_b, 
+    void * d_y, bool gelu
+){
+
+    cublasLt_matmul_desc matmul;
+    create_cublasLt_linlay_desc(
+        B,T,C,K,
+        matmul
+    );
+
+    void * d_workspace;
+    cublasLtMatmulAlgo_t algo = fetch_matmul_algos(handle, matmul, &d_workspace);
+
+    
+    CUBLAS_CHECK(cublasLtMatmul(
+        handle, matmul.matmulDesc, &matmul.alpha,
+        d_x, matmul.xDesc,
+        d_fc, matmul.fcDesc,
+        &matmul.beta,
+        d_y, matmul.cDesc,
+        d_y, matmul.yDesc,
+        &algo, d_workspace, (size_t)MLP_WORKSPACE_SIZE, stream
+    ));
+    // CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    u_int block_dim = 256;
+    u_int block_num = ((B*T*K) / block_dim) + 1;
+    if(gelu)
+        bias_GELU<<<block_num,block_dim,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
+    else    
+        bias<<<block_num,block_dim,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    return;
+
+}
+
+
+/**
+ * @brief 
+ * d_b has to be a matrix in col-major! (required by cuBLAS for having a fused bias + epilogue working)
+ * @param gelu 
+ * @param memory_order: if true, the x matrix will be in row-major, other wise will be in col-major
+ */
+void fused_linear_layer(
+    cublasLtHandle_t &handle, cudaStream_t & stream,
+    u_int B, u_int T, u_int C, u_int K,
+    void * d_x, void * d_fc, void * d_b, 
+    void * y, bool gelu, bool memory_order
+){
+
+    cublasLt_matmul_desc matmul;
+
+    create_cublasLt_linlay_desc(
+        B, T, C, K,
+        matmul, 
+        gelu, memory_order
+    );
+
+    void * d_workspace;
+    cublasLtMatmulAlgo_t algo = fetch_matmul_algos(handle, matmul, &d_workspace);
+
+    CUBLAS_CHECK(cublasLtMatmul(
+        handle, matmul.matmulDesc, &matmul.alpha,
+        d_x, matmul.xDesc,
+        d_fc, matmul.fcDesc,
+        &matmul.beta,
+        d_b, matmul.cDesc,
+        y, matmul.yDesc,
+        &algo, d_workspace, (size_t)MLP_WORKSPACE_SIZE, stream
+    ));
+    // CUDA_CHECK(cudaStreamSynchronize(stream)); //not necessary cause on the same stream
+    return;
+}
+
+/*
+Fused MLP
+*/
+void fused_gpu_mlp(
+    cublasLtHandle_t & handle, cudaStream_t & stream,
+    u_int B, u_int T, u_int C, u_int K,u_int M,
+    void * d_x, void * d_fc1, void * d_h,void * d_b1, void * d_fc2, void * d_b2, 
+    void * d_y
+){
+    fused_linear_layer(
+        handle,stream, 
+        B,  T,  C,  K,
+        d_x, d_fc1, d_b1, d_h,
+        true,true
+    );
+    fused_linear_layer(
+        handle,stream,
+        B,  T,  K,  M,
+        d_h, d_fc2, d_b2, d_y,
+        false, false
+    );
+    return;
+}
 
 void cuBLAS_test(cublasLtHandle_t & handle, cudaStream_t & stream){
     u_int M = 2, N = 3, K = 4;

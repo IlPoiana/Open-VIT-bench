@@ -527,7 +527,7 @@ __global__ void cub_layer_norm(
 }
 
 __global__ void cub_layer_norm(
-    half * x_data,      // device pointers
+    half * x_data, half * y,     // device pointers
     half * scale, half * bias,      // device pointers
     half epsilon, 
     u_int tokens_per_block
@@ -550,7 +550,7 @@ __global__ void cub_layer_norm(
         loop_idx = global_idx + EMBEDDINGS_SIZE * token;        
         cub_dev_block_ln(
             local_idx, loop_idx,
-            x_data, x_data,
+            x_data, y,
             th_scale, th_bias,
             epsilon,
             block_reduce
@@ -599,7 +599,7 @@ __global__ void cub_single_layer_norm(
 
 // Layer Norm, using CUB for reduction, M elements to compute per token per thread and N tokens to compute per block.
 __global__ void multi_elem_cub_ln(
-    half * x_data,      // device pointers
+    half * x_data, half * y,     // device pointers
     half * scale, half * bias,      // device pointers
     half epsilon, 
     u_int tokens_per_block
@@ -623,7 +623,7 @@ __global__ void multi_elem_cub_ln(
         loop_idx = global_idx + EMBEDDINGS_SIZE * token;        
         dev_multi_elem_cub_ln(
             local_idx, loop_idx,
-            x_data, x_data,
+            x_data, y,
             th_scale, th_bias,
             epsilon,
             block_reduce
@@ -635,7 +635,7 @@ __global__ void multi_elem_cub_ln(
 
 // Unrolled version of multiple element CUB layer norm
 __global__ void unrolled_multi_elem_cub_ln(
-    half * x_data,      // device pointers
+    half * x_data, half * y,     // device pointers
     half * scale, half * bias,      // device pointers
     half epsilon
 ){
@@ -660,7 +660,7 @@ __global__ void unrolled_multi_elem_cub_ln(
         loop_idx = global_idx + EMBEDDINGS_SIZE * token;
         dev_unrolled_multi_elem_cub_ln(
             local_idx, loop_idx,
-            x_data, x_data,
+            x_data, y,
             th_scale, th_bias,
             epsilon,
             block_reduce

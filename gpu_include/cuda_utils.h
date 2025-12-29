@@ -25,8 +25,6 @@ do {                                                                            
   CUDA_CHECK(cudaDeviceSynchronize()); /* catch async runtime errors */ \
 } while(0)
 
-#define WARM_UP 5
-#define RUNS_N 10
 #define MAX_STREAMS_CONV2D 32
 #define WORKSPACE_SIZE 128 << 20 // 32Mb
 

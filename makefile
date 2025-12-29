@@ -279,10 +279,12 @@ $(TEST_OBJ_FOLDER)/%.o
 
 
 $(TEST_OBJ_FOLDER)/layer_norm_bench.o \
+$(TEST_OBJ_FOLDER)/mlp_bench.o \
 : $(TEST_OBJ_FOLDER)/%.o: $(BENCH_SRC_FOLDER)/%.cu
 	nvcc -c $(CUDA_FLAGS) $< -o $@
 
 test_bin/layer_norm_bench.exe \
+test_bin/mlp_bench.exe \
 : $(TEST_BIN_FOLDER)/%.exe : \
 $(CPU_COMMON) \
 $(GPU_COMMON) \

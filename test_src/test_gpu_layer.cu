@@ -221,9 +221,9 @@ void gpu_comparison(){
     // -- 2) GPU-1 + CUB reduction 
     CUDA_CHECK(cudaMemcpy(d_x, gpu_x.data, sizeof(half) * total_elements_num, cudaMemcpyHostToDevice));
     
-    cub_layer_norm<<<block_number, CUB_LAYER_BLOCK_DIM>>>(d_x, d_scale, d_bias, gpu_epsilon, 1);
+    cub_layer_norm<<<block_number, CUB_LAYER_BLOCK_DIM>>>(d_x, d_y, d_scale, d_bias, gpu_epsilon, 1);
     
-    CUDA_CHECK(cudaMemcpy(gpu_y, d_x, sizeof(half) * total_elements_num, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(gpu_y, d_y, sizeof(half) * total_elements_num, cudaMemcpyDeviceToHost));
     difference = result_check_fp16(gpu_y, cpu_y, total_elements_num);
     cout << "GPU block avg. difference: " << to_percentage(difference) << endl;
         
@@ -231,26 +231,26 @@ void gpu_comparison(){
     block_number = (TOKENS_NUM * BATCH) / TOKENS_PER_BLOCK;
     CUDA_CHECK(cudaMemcpy(d_x, gpu_x.data, sizeof(half) * total_elements_num, cudaMemcpyHostToDevice));
     
-    cub_layer_norm<<<block_number, CUB_LAYER_BLOCK_DIM>>>(d_x, d_scale, d_bias, gpu_epsilon);
+    cub_layer_norm<<<block_number, CUB_LAYER_BLOCK_DIM>>>(d_x, d_y, d_scale, d_bias, gpu_epsilon, TOKENS_PER_BLOCK);
     
-    CUDA_CHECK(cudaMemcpy(gpu_y, d_x, sizeof(half) * total_elements_num, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(gpu_y, d_y, sizeof(half) * total_elements_num, cudaMemcpyDeviceToHost));
     difference = result_check_fp16(gpu_y, cpu_y, total_elements_num);
     cout << "GPU CUB avg. difference: " << to_percentage(difference) << endl;
 
     // -- 4) GPU-3 + multi element per thread(not fixed at two)
     CUDA_CHECK(cudaMemcpy(d_x, gpu_x.data, sizeof(half) * total_elements_num, cudaMemcpyHostToDevice));
     assert(BATCH % TOKENS_PER_BLOCK == 0);
-    multi_elem_cub_ln<<<block_number, CUB_LAYER_MULTI_BLOCK_DIM>>>(d_x, d_scale, d_bias, gpu_epsilon, TOKENS_PER_BLOCK);
+    multi_elem_cub_ln<<<block_number, CUB_LAYER_MULTI_BLOCK_DIM>>>(d_x, d_y, d_scale, d_bias, gpu_epsilon, TOKENS_PER_BLOCK);
     
-    CUDA_CHECK(cudaMemcpy(gpu_y, d_x, sizeof(half) * total_elements_num, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(gpu_y, d_y, sizeof(half) * total_elements_num, cudaMemcpyDeviceToHost));
     difference = result_check_fp16(gpu_y, cpu_y, total_elements_num);
     cout << "GPU CUB MULTI avg. difference: " << to_percentage(difference) << endl;
     // -- 5) GPU-4 + loop unrolling for fixed iterations number loops
     CUDA_CHECK(cudaMemcpy(d_x, gpu_x.data, sizeof(half) * total_elements_num, cudaMemcpyHostToDevice));
     
-    unrolled_multi_elem_cub_ln<<<block_number, CUB_LAYER_MULTI_BLOCK_DIM>>>(d_x, d_scale, d_bias, gpu_epsilon);
+    unrolled_multi_elem_cub_ln<<<block_number, CUB_LAYER_MULTI_BLOCK_DIM>>>(d_x, d_y, d_scale, d_bias, gpu_epsilon);
     
-    CUDA_CHECK(cudaMemcpy(gpu_y, d_x, sizeof(half) * total_elements_num, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(gpu_y, d_y, sizeof(half) * total_elements_num, cudaMemcpyDeviceToHost));
     difference = result_check_fp16(gpu_y, cpu_y, total_elements_num);
     cout << "GPU UNROLLED CUB MULTI avg. difference: " << to_percentage(difference) << endl;
 
@@ -259,9 +259,9 @@ void gpu_comparison(){
     
     block_number = total_elements_num / (EMBEDDINGS_SIZE *  TOKENS_PER_BLOCK);
     assert((total_elements_num % (EMBEDDINGS_SIZE *  TOKENS_PER_BLOCK))== 0);
-    cub_single_layer_norm<<<block_number, EMBEDDINGS_SIZE>>>(d_x, d_x, d_scale, d_bias, gpu_epsilon, TOKENS_PER_BLOCK);
+    cub_single_layer_norm<<<block_number, EMBEDDINGS_SIZE>>>(d_x, d_y, d_scale, d_bias, gpu_epsilon, TOKENS_PER_BLOCK);
     
-    CUDA_CHECK(cudaMemcpy(gpu_y, d_x, sizeof(half) * total_elements_num, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(gpu_y, d_y, sizeof(half) * total_elements_num, cudaMemcpyDeviceToHost));
     difference = result_check_fp16(gpu_y, cpu_y, total_elements_num);
     cout << "GPU SINGLE LAYER NORM avg. difference: " << to_percentage(difference) << endl;
 

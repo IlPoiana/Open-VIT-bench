@@ -895,7 +895,7 @@ void GpuBlock::forward(bool debug, u_int tokens_per_block){
         fused_gpu_mlp(
             ltHandle,stream,
             matmul, algo, d_workspace_mlp,
-            d_y, d_fc1, d_h,d_b1_mtx, d_fc2,d_b2_mtx,d_t
+            d_y, d_fc1, d_h, d_b1_mtx, d_fc2, d_b2_mtx,d_t
         );
 
         //Transpose

@@ -8,8 +8,6 @@
 #include <cstring>
 #include <cstdlib>
 
-#define LAYER_WARM_UP 20
-#define LAYER_N 100
 #define EPS 1e-4
 
 // 0)
@@ -21,7 +19,7 @@ void bench_gpu_ln(
     int blocks_n =  batch_size * tokens;
     int threads_n = embeddings / 2;
     assert(embeddings % 2 == 0);
-    float avg_ms = time_kernel(LAYER_WARM_UP, LAYER_N, [&]() {
+    float avg_ms = time_kernel(WARM_UP, N, 0,[&]() {
         gpu_layer_norm<<<blocks_n, threads_n>>>(
             embeddings,
             (half*)d_x, (half*)d_y,
@@ -29,20 +27,21 @@ void bench_gpu_ln(
             EPS
         );
     });
-
     cout << "Average time for kernel 0(gpu_layer_norm): " << avg_ms << "ms" << endl;
+
 }
 
 // 1)
-void bench_cub_ln(half * d_x, half * d_y,
+void bench_cub_ln(
+    half * d_x, half * d_y,
     half * d_scale, half * d_bias,
     int batch_size, int tokens
 ){
     int blocks_n =  batch_size * tokens;
     int threads_n = CUB_LAYER_BLOCK_DIM;
-    float avg_ms = time_kernel(LAYER_WARM_UP, LAYER_N, [&]() {
+    float avg_ms = time_kernel(WARM_UP, N, 0,[&]() {
         cub_layer_norm<<<blocks_n, threads_n>>>(
-            (half*)d_x,
+            (half*)d_x, (half*)d_y,
             (half*)d_scale, (half*)d_bias,
             EPS,
             1
@@ -61,9 +60,9 @@ void bench_multi_tok_cub_ln(
     int blocks_n =  (batch_size * tokens) / tokens_per_block;
     int threads_n = CUB_LAYER_BLOCK_DIM;
     assert((batch_size * tokens) % tokens_per_block == 0);
-    float avg_ms = time_kernel(LAYER_WARM_UP, LAYER_N, [&]() {
+    float avg_ms = time_kernel(WARM_UP, N, 0,[&]() {
         cub_layer_norm<<<blocks_n, threads_n>>>(
-            (half*)d_x,
+            (half*)d_x, (half*)d_y,
             (half*)d_scale, (half*)d_bias,
             EPS,
             tokens_per_block
@@ -82,9 +81,9 @@ void bench_multi_tok_elem_cub_ln(
     int blocks_n =  (batch_size * tokens) / tokens_per_block;
     int threads_n = CUB_LAYER_MULTI_BLOCK_DIM;
     assert((batch_size * tokens) % tokens_per_block == 0);
-    float avg_ms = time_kernel(LAYER_WARM_UP, LAYER_N, [&]() {
+    float avg_ms = time_kernel(WARM_UP, N, 0,[&]() {
         multi_elem_cub_ln<<<blocks_n, threads_n>>>(
-            (half*)d_x,
+            (half*)d_x, (half*)d_y,
             (half*)d_scale, (half*)d_bias,
             EPS,
             tokens_per_block
@@ -103,9 +102,9 @@ void bench_unrolled_mtec_ln(
     int blocks_n =  (batch_size * tokens) / TOKENS_PER_BLOCK;
     int threads_n = CUB_LAYER_MULTI_BLOCK_DIM;
     assert((batch_size * tokens) % TOKENS_PER_BLOCK == 0);
-    float avg_ms = time_kernel(LAYER_WARM_UP, LAYER_N, [&]() {
+    float avg_ms = time_kernel(WARM_UP, N, 0,[&]() {
         unrolled_multi_elem_cub_ln<<<blocks_n, threads_n>>>(
-            (half*)d_x,
+            (half*)d_x, (half*)d_y,
             (half*)d_scale, (half*)d_bias,
             EPS
         );
@@ -127,8 +126,8 @@ int main(int argc, char** argv)
               << " batch_size:          " << batch << "\n"
               << " tokens_per_block:    " << (kernel_id == 5 ? TOKENS_PER_BLOCK : tokens_per_block) << "\n"
               << " elements_per_thread: " << ELEMENTS_PER_TH << "\n"
-              << " warmup_iters:        " << LAYER_WARM_UP << "\n"
-              << " timed_iters:         " << LAYER_N << "\n";
+              << " warmup_iters:        " << WARM_UP << "\n"
+              << " timed_iters:         " << N << "\n";
 
     
     // -  Memory allocation
@@ -140,10 +139,10 @@ int main(int argc, char** argv)
     vector<float> h_scale(embeddings);
     vector<float> h_bias(embeddings);
     vector<half> gpu_input(elements_n);
+    vector<half> gpu_output(elements_n);
     vector<half> gpu_scale(embeddings);
     vector<half> gpu_bias(embeddings);
 
-    
     random_device rd;          
     mt19937 gen(rd());         
     uniform_real_distribution<float> dist(0.1f, 1.0f);
@@ -170,8 +169,8 @@ int main(int argc, char** argv)
     CUDA_CHECK(cudaMalloc(&d_scale, embeddings_bytes));
     CUDA_CHECK(cudaMalloc(&d_bias, embeddings_bytes));
     CUDA_CHECK(cudaMemcpy(d_input, gpu_input.data(), total_bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_scale, gpu_scale.data(), total_bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_bias, gpu_bias.data(), total_bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_scale, gpu_scale.data(), embeddings_bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_bias, gpu_bias.data(), embeddings_bytes, cudaMemcpyHostToDevice));
 
     // - Reference creation
     RowVector cpu_scale(h_scale.data(), embeddings);
@@ -184,45 +183,92 @@ int main(int argc, char** argv)
     Tensor cpu_x(h_input.data(), elements_n, batch, tokens, embeddings);
     cpu_ln(cpu_x);
 
-    if (kernel_id == 0 || kernel_id == 1)
+    // float amre = 0.0f;
+    if (kernel_id == 0 || kernel_id == 1){
+        // int blocks_n =  batch * tokens;
+        // int threads_n = embeddings / 2;
+        // assert(embeddings % 2 == 0);
+        // gpu_layer_norm<<<blocks_n, threads_n>>>(
+        //     embeddings,
+        //     (half*)d_input, (half*)d_output,
+        //     (half*)d_scale, (half*)d_bias,
+        //     EPS
+        // );
+      
+        // CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_output, total_bytes, cudaMemcpyDeviceToHost));
+        // cudaDeviceSynchronize();
+        // cout << "first iteration Absolute Mean Relative Error: " << compare_results(cpu_x, gpu_output.data()) * 100.0f<< "%"  << endl;
+    
+        // float * tmp = (float*)malloc(sizeof(float) * embeddings);
+        // f16_to_f32(gpu_output.data(), tmp, embeddings);
+        // RowVector cpu_ref(cpu_x.get_data(), embeddings);
+        // RowVector gpu_ref(tmp, embeddings);
+        // cout << "CPU" << endl; cpu_ref.print(); cout << "GPU" << endl; gpu_ref.print(); 
+
+        // Tensor cpu_ref_tensor(cpu_x.get_data(), embeddings,1,1, embeddings);
+
+        // cout << "first iteration row Absolute Mean Relative Error: " << compare_results(cpu_ref_tensor, gpu_output.data()) * 100.0f<< "%"  << endl;
+
+        
         bench_gpu_ln(
             (half*)d_input, (half*)d_output,
             (half*)d_scale, (half*)d_bias,
             batch, tokens, embeddings
         );
 
-    if (kernel_id == 0 || kernel_id == 2)
+        CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_output, total_bytes, cudaMemcpyDeviceToHost));
+        cudaDeviceSynchronize();
+        cout << "last iteration Absolute Mean Relative Error: " << compare_results(cpu_x, gpu_output.data()) * 100.0f<< "%"  << endl;
+    }
+    if (kernel_id == 0 || kernel_id == 2){
         bench_cub_ln(
             (half*)d_input, (half*)d_output,
             (half*)d_scale, (half*)d_bias,
             batch, tokens
         );
 
-    if (kernel_id == 0 || kernel_id == 3)
+        CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_output, total_bytes, cudaMemcpyDeviceToHost));
+        cudaDeviceSynchronize();
+        cout << "last iteration Absolute Mean Relative Error: " << compare_results(cpu_x, gpu_output.data()) * 100.0f<< "%"  << endl;
+    }
+    if (kernel_id == 0 || kernel_id == 3){
         bench_multi_tok_cub_ln(
             (half*)d_input, (half*)d_output,
             (half*)d_scale, (half*)d_bias,
             batch, tokens, tokens_per_block
         );
 
-    if (kernel_id == 0 || kernel_id == 4)
+        CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_output, total_bytes, cudaMemcpyDeviceToHost));
+        cudaDeviceSynchronize();
+        cout << "last iteration Absolute Mean Relative Error: " << compare_results(cpu_x, gpu_output.data()) * 100.0f<< "%"  << endl;
+    }
+    if (kernel_id == 0 || kernel_id == 4){
         bench_multi_tok_elem_cub_ln(
             (half*)d_input, (half*)d_output,
             (half*)d_scale, (half*)d_bias,
             batch, tokens, tokens_per_block
         );
-
-    if (kernel_id == 0 || kernel_id == 5)
+        CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_output, total_bytes, cudaMemcpyDeviceToHost));
+        cudaDeviceSynchronize();
+        cout << "last iteration Absolute Mean Relative Error: " << compare_results(cpu_x, gpu_output.data()) * 100.0f<< "%"  << endl;
+    }
+    if (kernel_id == 0 || kernel_id == 5){
         bench_unrolled_mtec_ln(
             (half*)d_input, (half*)d_output,
             (half*)d_scale, (half*)d_bias,
             batch, tokens
         );
-    
+        CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_output, total_bytes, cudaMemcpyDeviceToHost));
+        cudaDeviceSynchronize();
+        cout << "last iteration Absolute Mean Relative Error: " << compare_results(cpu_x, gpu_output.data()) * 100.0f<< "%"  << endl;
+    }
+
     // - Cleanup
     
     CUDA_CHECK(cudaFree(d_input));
     CUDA_CHECK(cudaFree(d_output));
+    CUDA_CHECK(cudaFree(d_scale));
+    CUDA_CHECK(cudaFree(d_bias));
 
     return 0;
 }
