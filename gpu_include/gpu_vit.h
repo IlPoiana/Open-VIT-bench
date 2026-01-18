@@ -5,6 +5,8 @@
 #include "../gpu_include/gpu_block.h"
 #include "../gpu_include/gpu_pred_head.h"
 
+void transpose_out_of_place(const float * in, half* out, size_t rows, size_t cols);
+
 patch_emb_weights convert_patch_emb(VisionTransformer &cpu_vit);
 
 void convert_blocks( VisionTransformer &cpu_vit, vector<block_weights> &blk_w);
@@ -18,7 +20,6 @@ void convert_vit_weights(
     vector<block_weights> &blk_w,
     pred_head_weights &ph_w
 );
-
 
 /**
  * @brief Inference ViT implementation, supporting single or multi stream execution
@@ -37,7 +38,12 @@ class GpuVit {
 
         float block_scale = 1.0f;
 
+        bool own_shared_buffers = false;
+        bool own_weights = false;
+        bool descriptors_are_initialized = false;
+
         void set_class_buffers();
+        void reset_buffers();
 
     public:
         cudaStream_t     stream;
@@ -51,11 +57,12 @@ class GpuVit {
         vit_size patch_w  = 16;
         vit_size channels = 3;
         vit_size embeddings = 768;
- 
+        
         vit_size  depth;        
         vit_size  num_heads;
         vit_float scale_val;
         vit_size num_classes;
+        int tokens_per_block = 4;
 
         void * d_pic    ; //[B,C,H,W]
         void * d_x      ; //[B,T,E]
@@ -68,10 +75,12 @@ class GpuVit {
         GpuPredictionHead ph;
         vector<GpuBlock>  blocks;          
 
-        /**
-         * @brief 
-         * 
-         */
+        GpuVit(const GpuVit&) = delete;
+        GpuVit& operator=(const GpuVit&) = delete;
+
+        GpuVit(GpuVit&& other) noexcept;
+        GpuVit& operator=(GpuVit&& vit) noexcept;
+
         GpuVit(
             cudaStream_t     &_stream,
             cudnnHandle_t    &_cudnn_handle,
@@ -90,9 +99,10 @@ class GpuVit {
             vit_bool allocate_pe_shared_ptrs = true, //initialize the weights shared pointers
 
             vit_bool block_mlp_kernel_type = true,
-            vit_bool init_block_descriptors = true,
             vit_bool allocate_blocks_shared_ptrs = true //initialize the weights shared pointers
         );
+
+        ~GpuVit();
 
         // 0) Allocate on device the buffers used in all the ops
         void allocate_shared_buffers();
@@ -115,8 +125,10 @@ class GpuVit {
         
         /* 5) Forward of the model, starts from d_pic result in d_x!
         */
-        virtual void forward();
+        void forward();
         
+        void compute_predictions();
+
         void print_dimensions();
 
         void print_predictions(bool debug = false);
@@ -173,7 +185,6 @@ class GpuVitBasePatch16_224 : public GpuVit{
             false,
             false,
             _mlp_kernel_type,
-            false,
             false
         ){}
 

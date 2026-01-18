@@ -94,6 +94,7 @@ GpuPatchEmbedder::GpuPatchEmbedder(
         CUDA_CHECK(cudaMallocAsync(&d_out_pic, sizeof(half) * output_pic_elements_num, stream));
         CUDA_CHECK(cudaMallocAsync(&d_t, sizeof(half) * flatten_elements_num, stream));
         CUDA_CHECK(cudaMallocAsync(&d_x, sizeof(half) * embedded_elements_num, stream));
+        CUDA_CHECK(cudaMemsetAsync(d_t,0,sizeof(half) * flatten_elements_num, stream));
         own_device_ptrs = true;
     }
     if(init_shared_ptrs){
@@ -144,7 +145,7 @@ void GpuPatchEmbedder::add_cls_token(){
     for(int b = 0; b < batch; b++){
         d_tok += embeddings; //Skip the first token(CLS token)
         CUDA_CHECK(
-            cudaMemcpyAsync(d_tok,d_flat,sizeof(half) * tokens * embeddings,cudaMemcpyDeviceToDevice,stream)
+            cudaMemcpyAsync(d_tok, d_flat, sizeof(half) * tokens * embeddings, cudaMemcpyDeviceToDevice,stream)
         );
         d_tok += (tokens * embeddings); //next batch
         d_flat += (tokens * embeddings);
@@ -176,7 +177,7 @@ void GpuPatchEmbedder::forward(bool debug){
         cout << "h_out_pic: " << endl;h_out_pic.print();
     }
     //transpose 
-    transpose_strided_tensor3d<<<transpose_blocks_n,block_dim,0,stream>>>((half *)d_out_pic,(half *)d_t,batch,embeddings, tokens);
+    transpose_strided_tensor3d<<<transpose_blocks_n,block_dim,0,stream>>>((half *)d_out_pic, (half *)d_t, batch, embeddings, tokens);
     
     if(debug){
         vector<half>host_t(flatten_elements_num);
@@ -204,7 +205,7 @@ void GpuPatchEmbedder::forward(bool debug){
     }
     
     //add pos embeddings
-    add_pos_embeddings<<<pos_emb_blocks_n, block_dim, 0, stream>>>((half *)d_x, (half *)d_pos_emb, embedded_elements_num, (embeddings * (tokens + 1)) );
+    add_pos_embeddings<<<pos_emb_blocks_n, block_dim, 0, stream>>>((half *)d_x, (half *)d_pos_emb, embedded_elements_num, (embeddings * (tokens + 1)));
     
     if(debug){
         vector<half>host_t(embedded_elements_num);
@@ -243,6 +244,13 @@ void GpuPatchEmbedder::set_weights_data(void * d_w_, void * d_bias_, void * d_po
     d_bias = d_bias_;
     d_pos_emb = d_pos_emb_;
 }
+
+void GpuPatchEmbedder::set_kernel_params(int _block_dim, int _transpose_stride, int _pos_emb_stride){
+    block_dim = _block_dim;
+    transpose_blocks_n = ((flatten_elements_num) / (block_dim * _transpose_stride)) + 1;
+    pos_emb_blocks_n = ((embedded_elements_num) / (block_dim * _pos_emb_stride)) + 1; 
+}
+
 
 void GpuPatchEmbedder::load_weights_data(half * conv_w, half * bias, half * pos_emb, bool on_device){
     cudaMemcpyKind memcpy_kind = cudaMemcpyHostToDevice;

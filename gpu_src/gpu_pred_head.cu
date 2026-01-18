@@ -19,6 +19,8 @@ pred_head_weights::pred_head_weights(
     head_bias = _head_bias;
 }
 
+softmax_desc::softmax_desc(): x_desc() {}
+
 void softmax_desc::destroy_descriptors(){
     cudnnDestroyTensorDescriptor(x_desc);
 }
@@ -61,6 +63,48 @@ void create_ph_desc(
     
 }
 
+GpuPredictionHead &GpuPredictionHead::operator=(GpuPredictionHead&& ph) noexcept{
+    cudnn_handle = ph.cudnn_handle;
+    cublas_handle = ph.cublas_handle;
+    stream = ph.stream;
+    algo = ph.algo;
+    /*TO CHECK*/
+    softmax = ph.softmax;
+    matmul = ph.matmul;
+    //-------
+    d_x = ph.d_x;
+    d_t = ph.d_t;
+    d_y = ph.d_y;
+    d_pred = ph.d_pred;
+    d_workspace = ph.d_workspace;
+
+    d_ln_scale     = ph.d_ln_scale;
+    d_ln_bias      = ph.d_ln_bias;
+    d_head_weights = ph.d_head_weights;
+    d_head_bias    = ph.d_head_bias;
+
+    batch = ph.batch;
+    tokens = ph.tokens;
+    embeddings = ph.embeddings;
+    class_num = ph.class_num;
+    stride_val = ph.stride_val;
+    blocks_num = ph.blocks_num;
+    block_dim = ph.block_dim;
+    tokens_per_block = ph.tokens_per_block;
+    epsilon = ph.epsilon;
+
+    if(host_arr_initialized){
+        free(class_prediction);
+        free(gpu_x);
+        free(h_x);
+    }
+    class_prediction = ph.class_prediction;
+    gpu_x = ph.gpu_x;
+    h_x = ph.h_x;
+
+    return *this;
+}
+
 //Initialize the object istance and descriptors, allocate unique pointers 
 GpuPredictionHead::GpuPredictionHead(
     u_int batch_,
@@ -80,13 +124,39 @@ GpuPredictionHead::GpuPredictionHead(
     stream(stream_),
     block_dim(embeddings_)
 {
-    probabilities_array = vector<float>(batch * class_num);
-    class_prediction = vector<int>(batch);
+    class_prediction = (int *)malloc(sizeof(int) * batch);
     input_elements_number = batch * tokens * embeddings;
     
     gpu_x = (half *)malloc(sizeof(half) * input_elements_number);
     h_x = (float *)malloc(sizeof(float) * input_elements_number);
+    host_arr_initialized = true;
 }
+
+GpuPredictionHead::GpuPredictionHead():
+    cudnn_handle (),
+    cublas_handle(),
+    stream (),
+    softmax(),
+    algo   (),
+    matmul (),
+    d_x    (),         
+    d_t    (),         
+    d_y    (),         
+    d_pred (),      
+    d_ln_scale(),      
+    d_ln_bias (),       
+    d_head_weights(),  
+    d_head_bias(),         
+    batch     (),
+    tokens    (),
+    embeddings(),
+    class_num (),
+    blocks_num(),
+    block_dim (),
+    class_prediction(),
+    gpu_x(),
+    h_x()
+{}
 
 GpuPredictionHead::~GpuPredictionHead(){
     if(destroy_shared_buffers){
@@ -99,8 +169,11 @@ GpuPredictionHead::~GpuPredictionHead(){
     if(destroy_shared_weights){
         free_weights();
     }
-    free(gpu_x);
-    free(h_x);
+    if(host_arr_initialized){
+        free(class_prediction);
+        free(gpu_x);
+        free(h_x);
+    }
 }
 
 void GpuPredictionHead::mark_shared_buffers(){
@@ -110,6 +183,11 @@ void GpuPredictionHead::mark_shared_buffers(){
 void GpuPredictionHead::mark_shared_weights(){
     destroy_shared_weights = true;
 }
+
+void GpuPredictionHead::unmark_host_arr(){
+    host_arr_initialized = false;
+}
+
 
 void GpuPredictionHead::free_weights(){
     cudaFree(d_ln_scale);
@@ -186,9 +264,19 @@ void GpuPredictionHead::set_shared_buffers(
 
 void GpuPredictionHead::compute_predictions(){
     cudaStreamSynchronize(stream);
-    f16_to_f32(gpu_x, probabilities_array.data(), batch * class_num);
-    for(int i = 0; i < batch; i++){
-        class_prediction[i] = argmax(probabilities_array, i * class_num, (i + 1) * class_num);
+    float max_val;
+    int idx;
+    for (int b = 0; b < batch; b++){
+        max_val = -1; //Prevoiusly have done a softmax so all values are [0,1]
+        idx = 0;
+        for(int cls = 0; cls < class_num; cls++){
+            float val = __half2float(gpu_x[b * class_num + cls]);
+            if(val > max_val){
+                max_val = val;
+                idx = cls;
+            }
+        }
+        class_prediction[b] = idx;
     }
 }
 
@@ -267,5 +355,5 @@ void GpuPredictionHead::forward(bool debug){
 
     /*Find the max of each elements of the batch*/
     CUDA_CHECK(cudaMemcpyAsync(gpu_x, d_pred, sizeof(half) * batch * class_num, cudaMemcpyDeviceToHost));
-    compute_predictions();
+    // compute_predictions();
 }

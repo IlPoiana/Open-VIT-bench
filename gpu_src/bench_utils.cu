@@ -1,6 +1,27 @@
 
 #include "../gpu_include/bench_utils.h"
 
+void kernel_time::print() {
+    cout << "   Kernel time (ms): " << time << endl;
+}
+
+void kernel_time::to_JSON(int batch, int params[]){
+    int elements_per_th = params[0];
+    int tokens_per_block = params[1];
+
+    cout << "{\n"
+        << "\"batch\":" << batch << ",\n"
+        << "\"params\": {\n" 
+            << "\"tokens_per_block\":" << tokens_per_block << ",\n"
+            << "\"elements_per_th\":" << elements_per_th << "\n"
+        << "},\n"
+        << "\"time\": {\n" 
+            << "\"time\":" << time << "\n"
+        << "}\n"
+        << "}\n";
+}
+
+
 int get_arg(int argc, char** argv, const char* name, int default_val){
     for (int i = 1; i < argc - 1; ++i) {
         if (strcmp(argv[i], name) == 0) {
@@ -50,6 +71,24 @@ float time_kernel(
     return total_ms / iters;
 }
 
+float time_cpu(
+    int warmup,
+    int iters,
+    std::function<void()> func
+){
+    // Warm-up
+    for (int i = 0; i < warmup; ++i)
+        func();
+
+    auto start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < iters; ++i)
+        func();
+    auto end = std::chrono::high_resolution_clock::now();
+
+    std::chrono::duration<float, std::milli> duration = end - start;
+    return duration.count() / iters;
+}
+
 
 // Returns the MRE of the cpu `y` Tensor and `gpu_y`. Attention! There is a tolerance instroduced to avoid division by zero
 float compare_results(Tensor &y, half * gpu_y){
@@ -73,5 +112,17 @@ float compare_results(Tensor &y, half * gpu_y){
             }
         }
     }
+    return float(avg);
+}
+
+float compare_predictions(PredictionBatch &cpu, int * gpu){
+    double avg = 0;
+    int total_elem_num = cpu.get_B();
+    for(u_int b = 0; b < cpu.get_B(); b++){
+        avg += 
+            (cpu.get_prediction_class(b) == gpu[b] ? 1.0 : 0.0)
+            / total_elem_num;
+    }
+                               
     return float(avg);
 }

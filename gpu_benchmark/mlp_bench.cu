@@ -8,21 +8,36 @@
 #include <cstring>
 #include <cstdlib>
 
-#define EPS 1e-4
-
 struct mlp_time{
     float kernel;
-    float postprocessing;       
+    float transpose;       
 
     void print(){
-        cout << "   kernel       : " << kernel << "ms" << endl;
-        cout << "   postprocessing: " << postprocessing << "ms" << endl;
+        cout << "   Kernel (ms)     : " << kernel << endl;
+        cout << "   Transpose (ms)  : " << transpose << endl;
     }
 
-    mlp_time(float _kernel = 0.0f, float _postprocessing = 0.0f):
+    mlp_time(float _kernel = 0.0f, float _transpose = 0.0f):
         kernel(_kernel),
-        postprocessing(_postprocessing)
+        transpose(_transpose)
     {}
+
+    void to_JSON(int batch, int params[]){
+        int mlp_type      = params[0];
+        int stride_val    = params[1];
+
+        cout << "{\n"
+            << "\"batch\":" << batch << ",\n"
+            << "\"params\": {\n" 
+                << "\"stride_val\":" << stride_val << ",\n"
+                << "\"mlp_type\":" << mlp_type << "\n"
+            << "},\n"
+            << "\"time\": {\n" 
+                << "\"kernel\":" << kernel << ",\n"
+                << "\"transpose\":" << transpose << "\n"
+            << "}\n"
+            << "}\n";
+    }
 };
 
 // 0)
@@ -130,6 +145,100 @@ mlp_time fused_mlp(
     });
 
     return mlp_time(avg_ms, postprocess); // Need to transpose the result
+    
+}
+
+void single_run(
+    cublasLtHandle_t & handle, cudaStream_t & stream,
+    u_int batch, u_int tokens, u_int channels,u_int k_channels,
+    void * d_workspace,
+    void * d_x, void * d_fc1, void * d_h,void * d_b1, void * d_fc2, void * d_b2,
+    half * gpu_b1 , half * gpu_b2, 
+    void * d_y, int stride_val, bool kernel_type
+){
+    if(kernel_type){
+        size_t input_elements_n = batch * tokens * channels;
+        size_t hidden_elements_n = batch * tokens * k_channels;
+
+        // -bias matrix (done only once)
+        vector<half> b1_gpu_mtx(hidden_elements_n); 
+        vector<half> b2_gpu_mtx(input_elements_n);   
+        bias_matrix(gpu_b1, b1_gpu_mtx.data(), k_channels, batch*tokens);
+        bias_matrix(gpu_b2, b2_gpu_mtx.data(), channels, batch*tokens);
+
+        void * d_b1_mtx, * d_b2_mtx;
+        CUDA_CHECK(cudaMalloc(&d_b1_mtx, sizeof(half) * hidden_elements_n));
+        CUDA_CHECK(cudaMalloc(&d_b2_mtx, sizeof(half) * input_elements_n));
+        CUDA_CHECK(cudaMemcpy(d_b1_mtx, b1_gpu_mtx.data(), sizeof(half) * hidden_elements_n, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_b2_mtx, b2_gpu_mtx.data(), sizeof(half) * input_elements_n, cudaMemcpyHostToDevice));
+
+        // -descriptors creation(done only once)
+        cublasLt_matmul_desc matmul[2];
+        cublasLtMatmulAlgo_t algo[2];
+        mlp_dimensions dim(batch, tokens, channels, k_channels, channels);
+
+        create_mlp_descriptors(
+            handle,
+            matmul,
+            d_workspace,
+            algo,
+            dim,
+            true
+        );
+
+        cublasLtMatrixLayout_t mlp_out_desc, res_in_desc;
+        cublasLtMatrixTransformDesc_t transposeDesc;
+        cublasOperation_t op = CUBLAS_OP_T;
+        CUBLAS_CHECK(cublasLtMatrixTransformDescCreate(&transposeDesc, CUDA_R_32F));
+        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&mlp_out_desc, CUDA_R_16F, /*rows*/batch*tokens, /*cols*/channels, /*ld*/batch*tokens));
+        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&res_in_desc, CUDA_R_16F, /*rows*/channels, /*cols*/batch*tokens, /*ld*/channels));
+        CUBLAS_CHECK(cublasLtMatrixTransformDescSetAttribute(
+            transposeDesc, CUBLASLT_MATRIX_TRANSFORM_DESC_TRANSA, &op, sizeof(op)
+        ));
+
+        // -kernel
+        fused_gpu_mlp(
+            handle,
+            stream,
+            matmul, algo, 
+            d_workspace,
+            d_x, d_fc1, d_h, d_b1_mtx, d_fc2, d_b2_mtx, d_y
+        );
+
+        /* - This memcopy isn't present in Vit so no time taken as postprocessing - */
+        CUDA_CHECK(cudaMemcpy(d_h, d_y, sizeof(half) * input_elements_n, cudaMemcpyDeviceToDevice));
+        float mlp_alpha = 1.0f, mlp_beta = 0.0f;
+        
+            // -transpose
+        cublasLtMatrixTransform(
+            handle, transposeDesc,
+            &mlp_alpha, d_h, mlp_out_desc,
+            &mlp_beta, nullptr, nullptr,
+            d_y, res_in_desc, stream
+        );
+    }
+    else {
+        //Create the descriptors
+        mlp_dimensions dim(batch, tokens, channels, k_channels, channels);
+        cublasLt_matmul_desc matmul[2];
+        cublasLtMatmulAlgo_t algo[2];
+        create_mlp_descriptors(
+            handle,
+            matmul,
+            d_workspace,
+            algo,
+            dim,
+            false
+        );
+        
+        gpu_mlp(
+            handle,stream,
+            batch,tokens,k_channels,channels,
+            matmul, algo, d_workspace,
+            d_x, d_fc1, d_h, d_b1, d_fc2, d_b2, d_y, 
+            stride_val
+        );
+    } 
     
 }
 
@@ -256,9 +365,9 @@ int main(int argc, char** argv)
             stride_val
         );
         CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_y, total_bytes, cudaMemcpyDeviceToHost));
-        cudaDeviceSynchronize();
         cout << "Last iteration comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
         res_time.print();
+        res_time.to_JSON(batch, new int[2]{0, stride_val});
     }
     if (kernel_id == 0 || kernel_id == 2){
         cout << "|| Fused kernel ||" << endl;
@@ -270,9 +379,40 @@ int main(int argc, char** argv)
             d_x, d_fc1, d_h, gpu_b1.data(), d_fc2, gpu_b2.data(), d_y
         );
         CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_y, total_bytes, cudaMemcpyDeviceToHost));
-        cudaDeviceSynchronize();
         cout << "Last iteration comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
         res_time.print();
+        res_time.to_JSON(batch, new int[2]{1, stride_val});
+    }
+    if(kernel_id == 3){
+        cout << " || Single Run unfused ||" << endl;
+        single_run(
+            handle,
+            stream,
+            batch, tokens, embeddings, hidden_channels,
+            d_workspace,
+            d_x, d_fc1, d_h, d_b1, d_fc2, d_b2,
+            gpu_b1.data(), gpu_b2.data(),
+            d_y,
+            stride_val, false
+        );
+        CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_y, total_bytes, cudaMemcpyDeviceToHost));
+        cout << "Single run comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+        
+    }
+    if(kernel_id == 4){
+        cout << " || Single Run fused ||" << endl;
+        single_run(
+            handle,
+            stream,
+            batch, tokens, embeddings, hidden_channels,
+            d_workspace,
+            d_x, d_fc1, d_h, d_b1, d_fc2, d_b2,
+            gpu_b1.data(), gpu_b2.data(),
+            d_y,
+            stride_val, true
+        );
+        CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_y, total_bytes, cudaMemcpyDeviceToHost));
+        cout << "Single run comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
     }
 
     // - Cleanup

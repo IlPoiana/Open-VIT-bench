@@ -10,8 +10,16 @@
 
 #define EPS 1e-4
 
+enum KERNEL_ID {
+    GPU_LN = 6,
+    CUB_LN,
+    MULTI_TOK_CUB_LN,
+    MULTI_TOK_ELEM_CUB_LN,
+    UNROLLED_MTEC_LN
+};
+
 // 0)
-void bench_gpu_ln(
+kernel_time bench_gpu_ln(
     half * d_x, half * d_y,
     half * d_scale, half * d_bias,
     int batch_size, int tokens, int embeddings
@@ -27,12 +35,11 @@ void bench_gpu_ln(
             EPS
         );
     });
-    cout << "Average time for kernel 0(gpu_layer_norm): " << avg_ms << "ms" << endl;
-
+    return kernel_time(avg_ms);
 }
 
 // 1)
-void bench_cub_ln(
+kernel_time bench_cub_ln(
     half * d_x, half * d_y,
     half * d_scale, half * d_bias,
     int batch_size, int tokens
@@ -48,11 +55,11 @@ void bench_cub_ln(
         );
     });
 
-    cout << "Average time for kernel 1(cub_layer_norm): " << avg_ms << "ms" << endl;
+    return kernel_time(avg_ms);
 }
 
 // 2)
-void bench_multi_tok_cub_ln(
+kernel_time bench_multi_tok_cub_ln(
     half * d_x, half * d_y,
     half * d_scale, half * d_bias,
     int batch_size, int tokens, int tokens_per_block
@@ -69,11 +76,11 @@ void bench_multi_tok_cub_ln(
         );
     });
 
-    cout << "Average time for kernel 2(multi_tok_cub_layer_norm): " << avg_ms << "ms" << endl;
+    return kernel_time(avg_ms);
 }
 
 // 3)
-void bench_multi_tok_elem_cub_ln(
+kernel_time bench_multi_tok_elem_cub_ln(
     half * d_x, half * d_y,
     half * d_scale, half * d_bias,
     int batch_size, int tokens, int tokens_per_block
@@ -90,11 +97,11 @@ void bench_multi_tok_elem_cub_ln(
         );
     });
 
-    cout << "Average time for kernel 3(multi_tok_elem_cub_layer_norm): " << avg_ms << "ms" << endl;
+    return kernel_time(avg_ms);
 }
 
 // 4) "mtec" stands for multi tokens & elements cub layer norm
-void bench_unrolled_mtec_ln(
+kernel_time bench_unrolled_mtec_ln(
     half * d_x, half * d_y,
     half * d_scale, half * d_bias,
     int batch_size, int tokens
@@ -110,17 +117,110 @@ void bench_unrolled_mtec_ln(
         );
     });
 
-    cout << "Average time for kernel 4(unrolled_mtec_ln): " << avg_ms << "ms" << endl;
+    return kernel_time(avg_ms);
+}
+
+void single_run(
+    half * d_x, half * d_y,
+    half * d_scale, half * d_bias,
+    int batch_size, int tokens, int embeddings,
+    int tokens_per_block,
+    KERNEL_ID id
+){
+    switch (id){
+        case GPU_LN:
+        {
+            int blocks_n =  batch_size * tokens;
+            int threads_n = embeddings / 2;
+            assert(embeddings % 2 == 0);
+            gpu_layer_norm<<<blocks_n, threads_n>>>(
+                embeddings,
+                (half*)d_x, (half*)d_y,
+                (half*)d_scale, (half*)d_bias,
+                EPS
+            );
+        }
+            break;
+        case CUB_LN:
+        {
+            int blocks_n =  batch_size * tokens;
+            int threads_n = CUB_LAYER_BLOCK_DIM;
+            cub_layer_norm<<<blocks_n, threads_n>>>(
+                (half*)d_x, (half*)d_y,
+                (half*)d_scale, (half*)d_bias,
+                EPS,
+                1
+            );
+        }
+            break;
+        case MULTI_TOK_CUB_LN:
+        {
+            int blocks_n =  (batch_size * tokens) / tokens_per_block;
+            int threads_n = CUB_LAYER_BLOCK_DIM;
+            assert((batch_size * tokens) % tokens_per_block == 0);
+            cub_layer_norm<<<blocks_n, threads_n>>>(
+                (half*)d_x, (half*)d_y,
+                (half*)d_scale, (half*)d_bias,
+                EPS,
+                tokens_per_block
+            );
+        }
+            break;
+        case MULTI_TOK_ELEM_CUB_LN:
+        {
+            int blocks_n =  (batch_size * tokens) / tokens_per_block;
+            int threads_n = CUB_LAYER_MULTI_BLOCK_DIM;
+            assert((batch_size * tokens) % tokens_per_block == 0);
+            multi_elem_cub_ln<<<blocks_n, threads_n>>>(
+                (half*)d_x, (half*)d_y,
+                (half*)d_scale, (half*)d_bias,
+                EPS,
+                tokens_per_block
+            );
+        }
+            break;
+        case UNROLLED_MTEC_LN:
+        {
+            int blocks_n =  (batch_size * tokens) / TOKENS_PER_BLOCK;
+            int threads_n = CUB_LAYER_MULTI_BLOCK_DIM;
+            assert((batch_size * tokens) % TOKENS_PER_BLOCK == 0);
+            unrolled_multi_elem_cub_ln<<<blocks_n, threads_n>>>(
+                (half*)d_x, (half*)d_y,
+                (half*)d_scale, (half*)d_bias,
+                EPS
+            );
+        }
+            break;
+        default:
+            break;
+    }
 }
 
 
 int main(int argc, char** argv)
 {
+    bool help               = get_arg(argc, argv, "--help", 0);
     int kernel_id           = get_arg(argc, argv, "--kernel", 0);
     int batch               = get_arg(argc, argv, "--batch", 32);
     int tokens_per_block    = get_arg(argc, argv, "--tokens_per_block", 32);
     int embeddings          = EMBEDDINGS_SIZE; // MIGHT CHANGE
     int tokens              = TOKENS_NUM_VIT;
+
+    if(help){
+        cout << "LayerNorm Benchmark Options:\n"
+             << " --help                      Print this help message\n"
+             << " --kernel <int>              Select the kernel to benchmark (default 0: all)\n"
+             << "                             0: All\n"
+             << "                             1: GPU LayerNorm\n"
+             << "                             2: CUB LayerNorm\n"
+             << "                             3: Multi-token CUB LayerNorm\n"
+             << "                             4: Multi-token & element CUB LayerNorm\n"
+             << "                             5: Unrolled Multi-token & element CUB LayerNorm\n"
+             << "                             6-10: Single run of the (n + 5)kernel \n"
+             << " --batch <int>               Batch size (default 32)\n"
+             << " --tokens_per_block <int>    Tokens per block for multi-token kernels (default 32)\n";
+        return 0;
+    }
 
     cout << "LayerNorm Benchmark\n"
               << " batch_size:          " << batch << "\n"
@@ -183,84 +283,81 @@ int main(int argc, char** argv)
     Tensor cpu_x(h_input.data(), elements_n, batch, tokens, embeddings);
     cpu_ln(cpu_x);
 
-    // float amre = 0.0f;
-    if (kernel_id == 0 || kernel_id == 1){
-        // int blocks_n =  batch * tokens;
-        // int threads_n = embeddings / 2;
-        // assert(embeddings % 2 == 0);
-        // gpu_layer_norm<<<blocks_n, threads_n>>>(
-        //     embeddings,
-        //     (half*)d_input, (half*)d_output,
-        //     (half*)d_scale, (half*)d_bias,
-        //     EPS
-        // );
-      
-        // CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_output, total_bytes, cudaMemcpyDeviceToHost));
-        // cudaDeviceSynchronize();
-        // cout << "first iteration Absolute Mean Relative Error: " << compare_results(cpu_x, gpu_output.data()) * 100.0f<< "%"  << endl;
-    
-        // float * tmp = (float*)malloc(sizeof(float) * embeddings);
-        // f16_to_f32(gpu_output.data(), tmp, embeddings);
-        // RowVector cpu_ref(cpu_x.get_data(), embeddings);
-        // RowVector gpu_ref(tmp, embeddings);
-        // cout << "CPU" << endl; cpu_ref.print(); cout << "GPU" << endl; gpu_ref.print(); 
-
-        // Tensor cpu_ref_tensor(cpu_x.get_data(), embeddings,1,1, embeddings);
-
-        // cout << "first iteration row Absolute Mean Relative Error: " << compare_results(cpu_ref_tensor, gpu_output.data()) * 100.0f<< "%"  << endl;
-
-        
-        bench_gpu_ln(
+    if (kernel_id == 0 || kernel_id == 1){        
+        cout << "|| Gpu layer norm ||" << endl;
+        kernel_time avg_time = bench_gpu_ln(
             (half*)d_input, (half*)d_output,
             (half*)d_scale, (half*)d_bias,
             batch, tokens, embeddings
         );
 
         CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_output, total_bytes, cudaMemcpyDeviceToHost));
-        cudaDeviceSynchronize();
         cout << "last iteration Absolute Mean Relative Error: " << compare_results(cpu_x, gpu_output.data()) * 100.0f<< "%"  << endl;
+        avg_time.print();
+        avg_time.to_JSON(batch, new int[2]{2, 1});
     }
     if (kernel_id == 0 || kernel_id == 2){
-        bench_cub_ln(
+        cout << "|| CUB layer norm ||" << endl;
+        kernel_time avg_time = bench_cub_ln(
             (half*)d_input, (half*)d_output,
             (half*)d_scale, (half*)d_bias,
             batch, tokens
         );
 
         CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_output, total_bytes, cudaMemcpyDeviceToHost));
-        cudaDeviceSynchronize();
         cout << "last iteration Absolute Mean Relative Error: " << compare_results(cpu_x, gpu_output.data()) * 100.0f<< "%"  << endl;
+        avg_time.print();
+        avg_time.to_JSON(batch, new int[2]{2, 1});
     }
     if (kernel_id == 0 || kernel_id == 3){
-        bench_multi_tok_cub_ln(
+        cout << "|| Multi-token CUB layer norm ||" << endl;
+        kernel_time avg_time = bench_multi_tok_cub_ln(
             (half*)d_input, (half*)d_output,
             (half*)d_scale, (half*)d_bias,
             batch, tokens, tokens_per_block
         );
 
         CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_output, total_bytes, cudaMemcpyDeviceToHost));
-        cudaDeviceSynchronize();
         cout << "last iteration Absolute Mean Relative Error: " << compare_results(cpu_x, gpu_output.data()) * 100.0f<< "%"  << endl;
+    avg_time.print();
+        avg_time.to_JSON(batch, new int[2]{2, tokens_per_block});
     }
     if (kernel_id == 0 || kernel_id == 4){
-        bench_multi_tok_elem_cub_ln(
+        cout << "|| Multi-token & element CUB layer norm ||" << endl;
+        kernel_time avg_time = bench_multi_tok_elem_cub_ln(
             (half*)d_input, (half*)d_output,
             (half*)d_scale, (half*)d_bias,
             batch, tokens, tokens_per_block
         );
         CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_output, total_bytes, cudaMemcpyDeviceToHost));
-        cudaDeviceSynchronize();
         cout << "last iteration Absolute Mean Relative Error: " << compare_results(cpu_x, gpu_output.data()) * 100.0f<< "%"  << endl;
+    avg_time.print();
+        avg_time.to_JSON(batch, new int[2]{ELEMENTS_PER_TH, tokens_per_block});
     }
     if (kernel_id == 0 || kernel_id == 5){
-        bench_unrolled_mtec_ln(
+        cout << "|| Unrolled Multi-token & element CUB layer norm ||" << endl;
+        kernel_time avg_time = bench_unrolled_mtec_ln(
             (half*)d_input, (half*)d_output,
             (half*)d_scale, (half*)d_bias,
             batch, tokens
         );
         CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_output, total_bytes, cudaMemcpyDeviceToHost));
-        cudaDeviceSynchronize();
         cout << "last iteration Absolute Mean Relative Error: " << compare_results(cpu_x, gpu_output.data()) * 100.0f<< "%"  << endl;
+        avg_time.print();
+        avg_time.to_JSON(batch, new int[2]{ELEMENTS_PER_TH, TOKENS_PER_BLOCK});
+    }
+    if  (kernel_id > 5 && kernel_id <= 10){
+        cout << "|| Single run of selected kernel " << kernel_id << " ||" << endl;
+        single_run(
+            (half*)d_input, (half*)d_output,
+            (half*)d_scale, (half*)d_bias,
+            batch, tokens, embeddings,
+            tokens_per_block,
+            KERNEL_ID(kernel_id)
+        );
+        
+        CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_output, total_bytes, cudaMemcpyDeviceToHost));
+        cout << "Absolute Mean Relative Error: " << compare_results(cpu_x, gpu_output.data()) * 100.0f<< "%"  << endl;
     }
 
     // - Cleanup

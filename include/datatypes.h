@@ -348,6 +348,9 @@ public:
     vit_float get_prediction_class_probability(vit_size i) const;
     vit_float get_probability_of_class(vit_size i, vit_size cls) const;
 
+    void get_prediction_probability_tensor(Tensor &out) const;
+    void get_predictions(int *out) const;
+
     void print() const;
 
     void to_ofstream(std::ofstream& os) const;

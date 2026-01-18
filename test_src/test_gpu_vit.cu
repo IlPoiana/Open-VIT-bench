@@ -1,12 +1,4 @@
-// #include <iostream>
-// #include <assert.h>
-// #include <vector>
-
 #include <cuda_fp16.h>
-// #include "../gpu_include/cuda_utils.h"
-
-// #include "../include/utils.h"
-// #include "../include/vision_transformer.h"
 #include "../gpu_include/gpu_vit.h"
 
 void cpu_gpu_comparison(int argc, char * argv[]){
@@ -25,19 +17,16 @@ void cpu_gpu_comparison(int argc, char * argv[]){
     //loading the kernel
     const string cvit_path = argv[2]; //models/vit_1.cvit
     VisionTransformer vit;
-    cout << "loading vit" << endl;//TO REMOVE
+    cout << "loading vit" << endl;
     load_cvit(cvit_path, vit);
     vit.print();
     
     VisionTransformer vit2;
-    cout << "loading vit 2" << endl;//TO REMOVE
+    cout << "loading vit 2" << endl;
     load_cvit("./models/vit_2.cvit", vit2);
     cout << " -- VIT 2 --" << endl;
     vit2.print();
 
-    // pic.print();
-
-    // TO UNCOMMENT
     PredictionBatch pb;
     vit.forward(pic, pb);
     cout << "CPU reference: " << endl;
@@ -69,7 +58,6 @@ void cpu_gpu_comparison(int argc, char * argv[]){
     bool init_pe_descriptors            = false; 
     bool allocate_pe_shared_ptrs        = false; 
     bool block_mlp_kernel_type          = true;
-    bool init_block_descriptors         = false;
     bool allocate_blocks_shared_ptrs    = false; 
 
     cudaStream_t stream;
@@ -107,7 +95,6 @@ void cpu_gpu_comparison(int argc, char * argv[]){
         init_pe_descriptors, 
         allocate_pe_shared_ptrs, 
         block_mlp_kernel_type, 
-        init_block_descriptors, 
         allocate_blocks_shared_ptrs
     );
 
@@ -129,6 +116,7 @@ void cpu_gpu_comparison(int argc, char * argv[]){
     //Needs to be in NCHW format, where N == batch
     gpu_vit.load_pics(gpu_pics_minibatch);
     gpu_vit.forward();
+    gpu_vit.compute_predictions();
     gpu_vit.print_predictions(true);
    
     gpu_vit.free_buffers();       

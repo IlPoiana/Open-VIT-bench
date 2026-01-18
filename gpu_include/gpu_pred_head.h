@@ -22,6 +22,8 @@ struct softmax_desc {
     cudnnSoftmaxAlgorithm_t algo = CUDNN_SOFTMAX_FAST;
     cudnnSoftmaxMode_t mode = CUDNN_SOFTMAX_MODE_INSTANCE;
 
+    softmax_desc();
+
     void destroy_descriptors();
 };
 
@@ -70,13 +72,19 @@ class GpuPredictionHead {
         u_int tokens_per_block = 1;
         double epsilon = 1e-4;
 
-        vector<float> probabilities_array;
-        vector<int> class_prediction;
+        int *class_prediction;
 
         // Debug
         half * gpu_x;
         float * h_x; 
         
+        GpuPredictionHead(const GpuPredictionHead&) = delete;
+        GpuPredictionHead& operator=(const GpuPredictionHead&) = delete;
+
+        GpuPredictionHead& operator=(GpuPredictionHead&& ph) noexcept;
+
+        GpuPredictionHead();
+
         //Initialize the object istance and descriptors, allocate unique pointers 
         GpuPredictionHead(
             u_int batch_,
@@ -93,6 +101,9 @@ class GpuPredictionHead {
         void mark_shared_buffers();
 
         void mark_shared_weights();
+
+        //Call this method if you want to modify one of the host buffers, rember to manually free after
+        void unmark_host_arr();
 
         void init_descriptors();
 
@@ -134,5 +145,5 @@ class GpuPredictionHead {
         float beta = 0.0f;
         bool destroy_shared_weights = false;
         bool destroy_shared_buffers = false;
-
+        bool host_arr_initialized = false;
 };

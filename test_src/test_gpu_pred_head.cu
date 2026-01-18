@@ -173,6 +173,7 @@ void gpu_comparison(bool debug){
     gpu_ph.stride_val = debug ? 1 : 32;
 
     gpu_ph.forward(debug);
+    gpu_ph.compute_predictions();
     // cudaStreamSynch(...) wait until all the streams have finished
 
     gpu_ph.mark_shared_buffers(); //Using device buffers previously allocated

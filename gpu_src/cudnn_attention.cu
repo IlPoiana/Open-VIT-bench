@@ -259,17 +259,22 @@ void attention_device(
     attn_cuDNN_descriptors &descriptors,
     bool residuals, void * d_residuals
 ){
-    /*TO REMOVE
     // cout << "weightBytes: " << descriptors.weightBytes << endl;
     // cout << "descriptors.loWin " << endl;
     // for(int i = 0; i < descriptors.loWin.size(); i++) cout << " " << descriptors.loWin.data()[i];
     // cout << "\ndescriptors.hiWin " << endl;
     // for(int i = 0; i < descriptors.hiWin.size(); i++) cout << " " << descriptors.hiWin.data()[i];
-    cout << "\nqDesc" << endl; printSeqDataDescriptor(descriptors.qDesc);
-    cout << "kDesc" << endl; printSeqDataDescriptor(descriptors.kDesc);
-    cout << "vDesc" << endl; printSeqDataDescriptor(descriptors.vDesc);
-    cout << "oDesc" << endl; printSeqDataDescriptor(descriptors.oDesc);
-    */
+    /*TO REMOVE*/
+    // cout << "\nqDesc" << endl; printSeqDataDescriptor(descriptors.qDesc);
+    // cout << "kDesc" << endl; printSeqDataDescriptor(descriptors.kDesc);
+    // cout << "vDesc" << endl; printSeqDataDescriptor(descriptors.vDesc);
+    // cout << "oDesc" << endl; printSeqDataDescriptor(descriptors.oDesc);
+    // cout << " dWeights=" << descriptors.dWeights
+    //  << " weightBytes=" << descriptors.weightBytes
+    //  << " dWork=" << descriptors.dWork
+    //  << " workBytes=" << descriptors.workBytes << endl;
+    //------
+
     CUDNN_CHECK(cudnnMultiHeadAttnForward(
         handle, descriptors.attn,
         /*currIdx*/ -1,

@@ -71,6 +71,8 @@ class GpuPatchEmbedder {
         //Is intended for passing some already 
         void set_weights_data(void * d_w_, void * d_bias_, void * d_pos_emb_);
 
+        void set_kernel_params(int _block_dim, int _transpose_stride, int _pos_emb_stride);
+        
         void load_weights_data(half * conv_w, half * bias, half * pos_emb, bool on_device);
 
         void load_pics(half * h_pic);

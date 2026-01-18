@@ -1,7 +1,7 @@
 // #include "../gpu_include/cuda_utils.h"
 #include "../gpu_include/gpu_vit.h"
 
-void transpose_out_of_place(const float * in, half* out, std::size_t rows, std::size_t cols) {
+void transpose_out_of_place(const float * in, half* out, size_t rows, size_t cols) {
     for (std::size_t i = 0; i < rows; ++i) {
         const float* Ai = in + i * cols;
         for (std::size_t j = 0; j < cols; ++j) {
@@ -150,6 +150,14 @@ pred_head_weights convert_pred_head(VisionTransformer &cpu_vit){
     );
 }
 
+void GpuVit::reset_buffers(){
+    CUDA_CHECK(cudaMemsetAsync(d_pic, 0, input_pic_elements_num * sizeof(half), stream)); //[B,C,H,W]
+    CUDA_CHECK(cudaMemsetAsync(d_x  , 0, embedded_elements_num  * sizeof(half), stream)); //[B,T,E]
+    CUDA_CHECK(cudaMemsetAsync(d_t  , 0, embedded_elements_num  * sizeof(half), stream)); //[B,T,E]
+    CUDA_CHECK(cudaMemsetAsync(d_y  , 0, embedded_elements_num  * sizeof(half), stream)); //[B,T,E]
+    CUDA_CHECK(cudaMemsetAsync(d_h  , 0, hidden_elements_number * sizeof(half), stream)); //[B,T,K]
+}
+
 void convert_vit_weights(
     VisionTransformer &vit,
     patch_emb_weights &pe_w,
@@ -194,6 +202,96 @@ void GpuVit::set_class_buffers(){
 
 }
 
+GpuVit &GpuVit::operator=(GpuVit&& vit) noexcept{
+    conv_dim = vit.conv_dim ; 
+    tokens = vit.tokens ; 
+    input_pic_elements_num = vit.input_pic_elements_num ; 
+    embedded_elements_num = vit.embedded_elements_num ; 
+    hidden_elements_number = vit.hidden_elements_number ; 
+    
+    block_epsilon = vit.block_epsilon ; 
+    pred_head_epsilon = vit.pred_head_epsilon ; 
+    block_scale = vit.block_scale ; 
+    tokens_per_block = vit.tokens_per_block;
+
+    own_shared_buffers = vit.own_shared_buffers ; 
+    own_weights = vit.own_weights ; 
+    descriptors_are_initialized = vit.descriptors_are_initialized ; 
+    
+    stream = vit.stream ; 
+    cudnn_handle = vit.cudnn_handle ; 
+    cublas_handle = vit.cublas_handle ; 
+    
+    batch = vit.batch ; 
+    img_h = vit.img_h ; 
+    img_w = vit.img_w ; 
+    patch_h = vit.patch_h ; 
+    patch_w = vit.patch_w ; 
+    channels = vit.channels ; 
+    embeddings = vit.embeddings ; 
+    depth = vit.depth ; 
+    num_heads = vit.num_heads ; 
+    scale_val = vit.scale_val ; 
+    num_classes = vit.num_classes ; 
+    
+    d_pic = vit.d_pic ; 
+    d_x = vit.d_x ; 
+    d_t = vit.d_t ; 
+    d_y = vit.d_y ; 
+    d_h = vit.d_h ; 
+    d_workspace = vit.d_workspace ; 
+
+    pe = move(vit.pe);
+    blocks = move(vit.blocks); 
+    ph = move(vit.ph);
+    return *this;
+}
+
+GpuVit::GpuVit(GpuVit&& vit) noexcept{
+    conv_dim = vit.conv_dim ;
+    tokens = vit.tokens ; 
+    input_pic_elements_num = vit.input_pic_elements_num ; 
+    embedded_elements_num = vit.embedded_elements_num ; 
+    hidden_elements_number = vit.hidden_elements_number ; 
+    
+    block_epsilon = vit.block_epsilon ; 
+    pred_head_epsilon = vit.pred_head_epsilon ; 
+    block_scale = vit.block_scale ; 
+    tokens_per_block = vit.tokens_per_block;
+
+    own_shared_buffers = vit.own_shared_buffers ; 
+    own_weights = vit.own_weights ; 
+    descriptors_are_initialized = vit.descriptors_are_initialized ; 
+    
+    stream = vit.stream ; 
+    cudnn_handle = vit.cudnn_handle ; 
+    cublas_handle = vit.cublas_handle ; 
+    
+    batch = vit.batch ; 
+    img_h = vit.img_h ; 
+    img_w = vit.img_w ; 
+    patch_h = vit.patch_h ; 
+    patch_w = vit.patch_w ; 
+    channels = vit.channels ; 
+    embeddings = vit.embeddings ; 
+    depth = vit.depth ; 
+    num_heads = vit.num_heads ; 
+    scale_val = vit.scale_val ; 
+    num_classes = vit.num_classes ; 
+    
+    d_pic = vit.d_pic ; 
+    d_x = vit.d_x ; 
+    d_t = vit.d_t ; 
+    d_y = vit.d_y ; 
+    d_h = vit.d_h ; 
+    d_workspace = vit.d_workspace ; 
+
+    pe = move(vit.pe);
+    blocks = move(vit.blocks); 
+    ph = move(vit.ph);
+}
+
+
 /**
  * @brief 
  * 
@@ -216,7 +314,6 @@ GpuVit::GpuVit(
     vit_bool allocate_pe_shared_ptrs, //initialize the weights shared pointers
 
     vit_bool block_mlp_kernel_type,
-    vit_bool init_block_descriptors,
     vit_bool allocate_blocks_shared_ptrs //initialize the weights shared pointers
 ):
     stream       (_stream),
@@ -257,24 +354,14 @@ GpuVit::GpuVit(
     // blocks
     blocks.reserve(depth);
     for(int i = 0; i < depth; ++i){
-        if(i == 0) //To have only 
-            blocks.emplace_back(
-                stream, cudnn_handle, cublas_handle,
-                batch, tokens + 1, embeddings, mlp_hidden,
-                block_mlp_kernel_type,
-                block_epsilon, block_scale, num_heads,
-                init_block_descriptors,
-                allocate_blocks_shared_ptrs
-            );   // blocks constructed here
-        else
-            blocks.emplace_back(
-                stream, cudnn_handle, cublas_handle,
-                batch, tokens + 1, embeddings, mlp_hidden,
-                block_mlp_kernel_type,
-                block_epsilon, block_scale, num_heads,
-                false,
-                allocate_blocks_shared_ptrs
-            );
+        blocks.emplace_back(
+            stream, cudnn_handle, cublas_handle,
+            batch, tokens + 1, embeddings, mlp_hidden,
+            block_mlp_kernel_type,
+            block_epsilon, block_scale, num_heads,
+            false,
+            allocate_blocks_shared_ptrs
+        );
     }
 
     input_pic_elements_num = pe.get_input_pic_elem_n();
@@ -283,7 +370,14 @@ GpuVit::GpuVit(
     ph.epsilon = pred_head_epsilon;
 }
 
-
+GpuVit::~GpuVit(){
+    if(own_weights)
+        free_weights();
+    if(own_shared_buffers)
+        free_buffers();
+    if(descriptors_are_initialized)
+        destroy_descriptors();
+}
 
 // 0) Allocate on device the buffers used in all the ops
 void GpuVit::allocate_shared_buffers(){
@@ -295,6 +389,7 @@ void GpuVit::allocate_shared_buffers(){
     CUDA_CHECK(cudaMallocAsync(&d_h      ,sizeof(half) * hidden_elements_number, stream));
     CUDA_CHECK(cudaMallocAsync(&d_workspace, WORKSPACE_SIZE, stream));            
     set_class_buffers();
+    own_shared_buffers = true;
 }
 
 // 1) Create all the descriptors for all the library functions used(cuBLAS and cuDNN)
@@ -306,6 +401,8 @@ void GpuVit::create_descriptors(){
     }
 
     ph.init_descriptors();
+
+    descriptors_are_initialized = true;
 }
 
 // 2) Allocate on device the buffers for the weights, also the workspace used for this block
@@ -318,6 +415,8 @@ void GpuVit::allocate_weights(){
     }
 
     ph.allocate_weights();
+
+    own_weights = true;
     
 };
 
@@ -364,6 +463,7 @@ void GpuVit::load_weights(
 
 // 4) Load the input data to the model
 void GpuVit::load_pics(half * pics){
+    reset_buffers();
     //put asyncronously data in d_pic, have to be `batch` pictures
     pe.load_pics(pics);
 }
@@ -373,17 +473,19 @@ void GpuVit::load_pics(half * pics){
 */
 void GpuVit::forward(){
     //Should all be happening in the same stream so no race conditions on the data
-    
     pe.forward();
     
     for(int i = 0; i < depth; i++){
-        blocks[i].forward();
+        blocks[i].forward(false, tokens_per_block);
     }
     
     ph.forward();
 
 }
 
+void GpuVit::compute_predictions(){
+    ph.compute_predictions();
+}
 
 void GpuVit::print_dimensions(){
     cout << "   picture dimensions: " << 
@@ -400,6 +502,8 @@ void GpuVit::print_dimensions(){
 
 
 void GpuVit::free_weights(){
+    assert(own_weights == true);
+    own_weights = false;
     pe.free_weights();
     
     for(int i = 0; i < depth; i++){
@@ -410,6 +514,9 @@ void GpuVit::free_weights(){
 }
 
 void GpuVit::free_buffers(){
+    assert(own_shared_buffers == true);
+    own_shared_buffers = false;
+
     CUDA_CHECK(cudaFree(d_pic));
     CUDA_CHECK(cudaFree(d_x));
     CUDA_CHECK(cudaFree(d_t));
@@ -419,6 +526,8 @@ void GpuVit::free_buffers(){
 }     
 
 void GpuVit::destroy_descriptors(){
+    assert(descriptors_are_initialized == true);
+    descriptors_are_initialized = false;
     pe.destroy_descriptors();
     for(int i = 0; i < depth; i++){
         blocks[i].destroy_descriptors();
@@ -435,7 +544,7 @@ void GpuVit::print_predictions(bool debug){
         cout << "probabilities array\n[";
         for(int b = 0; b < batch; b++){   
             for(int i = 0; i< num_classes; i++)
-                cout << ph.probabilities_array[b * num_classes + i] << " ";
+                cout << __half2float(ph.gpu_x[b * num_classes + i]) << " ";
             cout << "]\n";
         }
     }

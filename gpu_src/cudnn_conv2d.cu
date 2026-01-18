@@ -135,7 +135,7 @@ __global__ void transpose_strided_tensor3d(
     if (idx >= N) return;
 
     u_int in_idx = idx;
-    for(u_int stride = 0; in_idx + stride < N;stride += gridDim.x * blockDim.x){
+    for(u_int stride = 0; in_idx + stride < N; stride += gridDim.x * blockDim.x){
         u_int strided_idx = idx + stride;
         u_int CT = C * T;
         u_int b = strided_idx / CT;

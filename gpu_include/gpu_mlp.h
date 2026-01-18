@@ -21,6 +21,8 @@ struct cublasLt_matmul_desc {
     float alpha;
     float beta;
 
+    cublasLt_matmul_desc();
+
     void destroy_descriptors();
 };
 

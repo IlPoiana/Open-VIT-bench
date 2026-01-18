@@ -280,11 +280,19 @@ $(TEST_OBJ_FOLDER)/%.o
 
 $(TEST_OBJ_FOLDER)/layer_norm_bench.o \
 $(TEST_OBJ_FOLDER)/mlp_bench.o \
+$(TEST_OBJ_FOLDER)/patch_embed_bench.o \
+$(TEST_OBJ_FOLDER)/block_bench.o \
+$(TEST_OBJ_FOLDER)/prediction_head_bench.o \
+$(TEST_OBJ_FOLDER)/vit_bench.o \
 : $(TEST_OBJ_FOLDER)/%.o: $(BENCH_SRC_FOLDER)/%.cu
 	nvcc -c $(CUDA_FLAGS) $< -o $@
 
 test_bin/layer_norm_bench.exe \
 test_bin/mlp_bench.exe \
+test_bin/patch_embed_bench.exe \
+test_bin/block_bench.exe \
+test_bin/prediction_head_bench.exe \
+test_bin/vit_bench.exe \
 : $(TEST_BIN_FOLDER)/%.exe : \
 $(CPU_COMMON) \
 $(GPU_COMMON) \

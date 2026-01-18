@@ -8,6 +8,16 @@ void cublasLt_matmul_desc::destroy_descriptors(){
     cublasLtMatrixLayoutDestroy(yDesc);
 }
 
+cublasLt_matmul_desc::cublasLt_matmul_desc():
+    matmulDesc(),
+    xDesc (), 
+    fcDesc(),
+    cDesc (),   
+    yDesc (), 
+    alpha (),
+    beta  ()
+{}
+
 mlp_dimensions::mlp_dimensions(u_int _B, u_int _T,u_int _C,u_int _K,u_int _M){
     B = _B;
     T = _T;

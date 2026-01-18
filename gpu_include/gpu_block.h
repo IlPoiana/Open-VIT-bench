@@ -187,8 +187,7 @@ public:
         float rand_scale_ = 0.1f,
         bool initialize_descriptors = false
     );
-
-    // ----
+    // ----------------------------------
 
     /* -- CONSTRUCTOR USED IN ViT -- */
 
@@ -281,6 +280,21 @@ public:
         float* b1_data,  // fc1 bias   K
         float* A2_data,  // fc2 weights MxK
         float* b2_data   // fc2 bias   M
+    );
+
+    void set_weights_data(
+        void* d_n1_bias_ , 
+        void* d_n1_scale_, 
+        void* d_n2_bias_ , 
+        void* d_n2_scale_, 
+        void* d_fc1_     ,
+        void* d_b1_data_ ,
+        void* d_b1_mtx_  ,
+        void* d_fc2_     ,
+        void* d_b2_data_ ,
+        void* d_b2_mtx_  ,
+        void* d_attn_weights,
+        size_t weights_bytes
     );
 
     // Replace matmul descriptors (e.g. autotuned algos)

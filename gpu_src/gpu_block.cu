@@ -166,333 +166,6 @@ GpuBlock::GpuBlock(GpuBlock&& other) noexcept{
     h_debug_out = (half*)malloc(sizeof(half) * input_elements_number);
 }
 
-
-GpuBlock::GpuBlock(
-    u_int B_, u_int T_, u_int C_, u_int K_,
-    bool kernel_type_,
-    double epsilon_, float scale_, int num_heads_,
-    float rand_scale_
-): batch(B_), tokens(T_), channels(C_), k_channels(K_),
-    kernel_type(kernel_type_), 
-    epsilon(epsilon_), scale(scale_), num_heads(num_heads_), rand_scale(rand_scale_)
-{
-    /* -- Initialize all the descriptors -- */
-    assert(channels % num_heads == 0);
-    // 1. Create stream
-    CUDA_CHECK(cudaStreamCreate(&stream));
-
-    // 2. Create cuBLASLt handle
-    CUBLAS_CHECK(cublasLtCreate(&ltHandle));
-
-    // 3. Create cuDNN handle
-    CUDNN_CHECK(cudnnCreate(&cudnnHandle));
-    CUDNN_CHECK(cudnnSetStream(cudnnHandle, stream));
-
-    // 4. Allocate main activation buffers on device
-    input_elements_number = batch * tokens * channels;
-    hidden_elements_number = batch * tokens * k_channels;
-    size_t bytes_input = sizeof(half) * input_elements_number;
-    size_t bytes_hidden  = sizeof(half) * hidden_elements_number;
-
-    CUDA_CHECK(cudaMalloc(&d_x, bytes_input));  CUDA_CHECK(cudaMemset(d_x, 0, bytes_input));
-    CUDA_CHECK(cudaMalloc(&d_t, bytes_input));  CUDA_CHECK(cudaMemset(d_t, 0, bytes_input));
-    CUDA_CHECK(cudaMalloc(&d_y, bytes_input));  CUDA_CHECK(cudaMemset(d_y, 0, bytes_input));
-    CUDA_CHECK(cudaMalloc(&d_h, bytes_hidden)); CUDA_CHECK(cudaMemset(d_h, 0, bytes_hidden));
-    
-
-    // 5. Attention variables
-    h_q  = (float *)malloc(sizeof(float) * channels * channels);
-    h_k  = (float *)malloc(sizeof(float) * channels * channels);
-    h_v  = (float *)malloc(sizeof(float) * channels * channels);
-    h_p  = (float *)malloc(sizeof(float) * channels * channels);
-    h_qb = (float *)malloc(sizeof(float) * channels);
-    h_kb = (float *)malloc(sizeof(float) * channels);
-    h_vb = (float *)malloc(sizeof(float) * channels);
-    h_pb = (float *)malloc(sizeof(float) * channels);
-
-    // 6. LayerNorm params
-    CUDA_CHECK(cudaMalloc(&d_n1_bias,  sizeof(half)*channels));
-    CUDA_CHECK(cudaMalloc(&d_n1_scale, sizeof(half)*channels));
-    CUDA_CHECK(cudaMalloc(&d_n2_bias,  sizeof(half)*channels));
-    CUDA_CHECK(cudaMalloc(&d_n2_scale, sizeof(half)*channels));
-
-    // 7. MLP weights/biases
-    size_t bytes_fc1 = sizeof(half)*k_channels*channels;
-    size_t bytes_fc2 = sizeof(half)*channels*k_channels;
-    size_t bytes_b1  = sizeof(half)*k_channels;
-    size_t bytes_b2  = sizeof(half)*channels;
-    size_t bytes_b1_mtx = sizeof(half)*hidden_elements_number;
-    size_t bytes_b2_mtx = sizeof(half)*input_elements_number;
-
-    CUDA_CHECK(cudaMalloc(&d_fc1,     bytes_fc1));
-    CUDA_CHECK(cudaMalloc(&d_b1_data, bytes_b1));
-    CUDA_CHECK(cudaMalloc(&d_fc2,     bytes_fc2));
-    CUDA_CHECK(cudaMalloc(&d_b2_data, bytes_b2));
-    if(kernel_type) {
-        CUDA_CHECK(cudaMalloc(&d_b1_mtx,  bytes_b1_mtx));
-        CUDA_CHECK(cudaMalloc(&d_b2_mtx,  bytes_b2_mtx));
-    }
-    // 8. cuBLASLt MLP descriptors
-    mlp_dimensions mdim(batch, tokens, channels, k_channels, channels);
-    CUDA_CHECK(cudaMalloc(&d_workspace_mlp, (size_t)MLP_WORKSPACE_SIZE));
-    create_mlp_descriptors(ltHandle, matmul, d_workspace_mlp, algo, mdim, kernel_type);
-
-
-    // 9. Optional transpose descriptors if kernel_type == true (like your code)
-    if (kernel_type) {
-        cublasOperation_t op = CUBLAS_OP_T;
-
-        CUBLAS_CHECK(cublasLtMatrixTransformDescCreate(&transposeDesc, CUDA_R_32F));
-        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&mlp_out_desc, CUDA_R_16F, /*rows*/batch*tokens, /*cols*/channels, /*ld*/batch*tokens));
-        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&res_in_desc, CUDA_R_16F, /*rows*/channels, /*cols*/batch*tokens, /*ld*/channels));
-        CUBLAS_CHECK(cublasLtMatrixTransformDescSetAttribute(
-            transposeDesc, CUBLASLT_MATRIX_TRANSFORM_DESC_TRANSA, &op, sizeof(op)
-        ));
-    }
-
-
-    // 10. host debug buffer for pulling results back
-    h_debug_out = (half*)malloc(sizeof(half) * input_elements_number);
-
-}
-
-/*
-`initialize_descriptors`: if true, it will create and initialize the stream, handles and mlp descriptors
-*/
-GpuBlock::GpuBlock(
-    u_int B_, u_int T_, u_int C_, u_int K_,
-    void * d_x_, void * d_h_, void * d_t_, void * d_y_,
-    bool kernel_type_,
-    double epsilon_, float scale_, int num_heads_,
-    float rand_scale_, 
-    bool initialize_descriptors,
-    bool allocate_weights
-): batch(B_), tokens(T_), channels(C_), k_channels(K_),
-    d_x(d_x_), d_h(d_h_), d_t(d_t_), d_y(d_y_),
-    kernel_type(kernel_type_), 
-    epsilon(epsilon_), scale(scale_), num_heads(num_heads_), rand_scale(rand_scale_)
-{
-    // 0. Initialize all the descriptors
-    assert(channels % num_heads == 0);
-    if(initialize_descriptors){
-        // 1. Create stream
-        CUDA_CHECK(cudaStreamCreate(&stream));
-
-        // 2. Create cuBLASLt handle
-        CUBLAS_CHECK(cublasLtCreate(&ltHandle));
-
-        // 3. Create cuDNN handle
-        CUDNN_CHECK(cudnnCreate(&cudnnHandle));
-        CUDNN_CHECK(cudnnSetStream(cudnnHandle, stream));
-
-        // 8. cuBLASLt MLP descriptors
-        mlp_dimensions mdim(batch, tokens, channels, k_channels, channels);
-        CUDA_CHECK(cudaMalloc(&d_workspace_mlp, (size_t)MLP_WORKSPACE_SIZE));
-        create_mlp_descriptors(ltHandle, matmul, d_workspace_mlp, algo, mdim, kernel_type);
-    
-
-        // 9. Optional transpose descriptors if kernel_type == true (like your code)
-        if (kernel_type) {
-            cublasOperation_t op = CUBLAS_OP_T;
-
-            CUBLAS_CHECK(cublasLtMatrixTransformDescCreate(&transposeDesc, CUDA_R_32F));
-            CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&mlp_out_desc, CUDA_R_16F, /*rows*/batch*tokens, /*cols*/channels, /*ld*/batch*tokens));
-            CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&res_in_desc, CUDA_R_16F, /*rows*/channels, /*cols*/batch*tokens, /*ld*/channels));
-            CUBLAS_CHECK(cublasLtMatrixTransformDescSetAttribute(
-                transposeDesc, CUBLASLT_MATRIX_TRANSFORM_DESC_TRANSA, &op, sizeof(op)
-            ));
-        }
-    }
-
-    // 1. Allocate main activation buffers on device
-    input_elements_number = batch * tokens * channels;
-    hidden_elements_number = batch * tokens * k_channels;
-
-    // 2. Attention variables
-    h_q  = (float *)malloc(sizeof(float) * channels * channels);
-    h_k  = (float *)malloc(sizeof(float) * channels * channels);
-    h_v  = (float *)malloc(sizeof(float) * channels * channels);
-    h_p  = (float *)malloc(sizeof(float) * channels * channels);
-    h_qb = (float *)malloc(sizeof(float) * channels);
-    h_kb = (float *)malloc(sizeof(float) * channels);
-    h_vb = (float *)malloc(sizeof(float) * channels);
-    h_pb = (float *)malloc(sizeof(float) * channels);
-
-    // 3. LayerNorm params
-    if(allocate_weights){
-        CUDA_CHECK(cudaMalloc(&d_n1_bias,  sizeof(half)*channels));
-        CUDA_CHECK(cudaMalloc(&d_n1_scale, sizeof(half)*channels));
-        CUDA_CHECK(cudaMalloc(&d_n2_bias,  sizeof(half)*channels));
-        CUDA_CHECK(cudaMalloc(&d_n2_scale, sizeof(half)*channels));
-    }
-    // 4. MLP weights/biases
-    size_t bytes_fc1 = sizeof(half)*k_channels*channels;        
-    size_t bytes_fc2 = sizeof(half)*channels*k_channels;        
-    size_t bytes_b1  = sizeof(half)*k_channels;                 
-    size_t bytes_b2  = sizeof(half)*channels;                   
-    size_t bytes_b1_mtx = sizeof(half)*hidden_elements_number;
-    size_t bytes_b2_mtx = sizeof(half)*input_elements_number;
-    if(allocate_weights){
-        CUDA_CHECK(cudaMalloc(&d_fc1,     bytes_fc1));
-        CUDA_CHECK(cudaMalloc(&d_b1_data, bytes_b1));
-        CUDA_CHECK(cudaMalloc(&d_fc2,     bytes_fc2));
-        CUDA_CHECK(cudaMalloc(&d_b2_data, bytes_b2));
-        if(kernel_type) {
-            CUDA_CHECK(cudaMalloc(&d_b1_mtx,  bytes_b1_mtx));
-            CUDA_CHECK(cudaMalloc(&d_b2_mtx,  bytes_b2_mtx));
-        }
-    }
-
-
-    // 5. host debug buffer for pulling results back
-    h_debug_out = (half*)malloc(sizeof(half) * input_elements_number);
-
-}
-
-
-GpuBlock::GpuBlock(
-    u_int B_, u_int T_, u_int C_, u_int K_,
-    bool kernel_type_,
-    double epsilon_, float scale_,
-    //Layer norm
-    float* n1b_data,
-    float* n1g_data,
-    float* n2b_data,
-    float* n2g_data,
-    //Attention
-    float* q_data,
-    float* k_data,
-    float* v_data,
-    float* p_data,   // O proj
-    float* qb_data,
-    float* kb_data,
-    float* vb_data,
-    float* pb_data,
-    //Mlp
-    float* A1_data,  // fc1 weights KxC
-    float* b1_data,  // fc1 bias   K
-    float* A2_data,  // fc2 weights MxK
-    float* b2_data,   // fc2 bias   M
-
-    int num_heads_,
-    float rand_scale_,
-    bool initialize_descriptors
-):
-batch(B_), tokens(T_), channels(C_), k_channels(K_),
-kernel_type(kernel_type_), 
-epsilon(epsilon_), scale(scale_), num_heads(num_heads_), rand_scale(rand_scale_)
-{
-    assert(channels % num_heads == 0);
-
-    // 0. Allocate main activation buffers on device
-    input_elements_number = batch * tokens * channels;
-    hidden_elements_number = batch * tokens * k_channels;
-
-    /* -- Initialize all the descriptors -- */
-    if(initialize_descriptors){
-        // 1. Create stream
-        CUDA_CHECK(cudaStreamCreate(&stream));
-
-        // 2. Create cuBLASLt handle
-        CUBLAS_CHECK(cublasLtCreate(&ltHandle));
-
-        // 3. Create cuDNN handle
-        CUDNN_CHECK(cudnnCreate(&cudnnHandle));
-        CUDNN_CHECK(cudnnSetStream(cudnnHandle, stream));
-
-        // 5. cuBLASLt MLP descriptors
-        mlp_dimensions mdim(batch, tokens, channels, k_channels, channels);
-        CUDA_CHECK(cudaMalloc(&d_workspace_mlp, (size_t)MLP_WORKSPACE_SIZE));
-        create_mlp_descriptors(ltHandle, matmul, d_workspace_mlp, algo, mdim, kernel_type);
-    
-
-        // 6. Optional transpose descriptors if kernel_type == true (like your code)
-        if (kernel_type) {
-            cublasOperation_t op = CUBLAS_OP_T;
-
-            CUBLAS_CHECK(cublasLtMatrixTransformDescCreate(&transposeDesc, CUDA_R_32F));
-            CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&mlp_out_desc, CUDA_R_16F, /*rows*/batch*tokens, /*cols*/channels, /*ld*/batch*tokens));
-            CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&res_in_desc, CUDA_R_16F, /*rows*/channels, /*cols*/batch*tokens, /*ld*/channels));
-            CUBLAS_CHECK(cublasLtMatrixTransformDescSetAttribute(
-                transposeDesc, CUBLASLT_MATRIX_TRANSFORM_DESC_TRANSA, &op, sizeof(op)
-            ));
-        }
-    }
-
-    // 1. Attention variables
-    h_q  = (float *)malloc(sizeof(float) * channels * channels);
-    h_k  = (float *)malloc(sizeof(float) * channels * channels);
-    h_v  = (float *)malloc(sizeof(float) * channels * channels);
-    h_p  = (float *)malloc(sizeof(float) * channels * channels);
-    h_qb = (float *)malloc(sizeof(float) * channels);
-    h_kb = (float *)malloc(sizeof(float) * channels);
-    h_vb = (float *)malloc(sizeof(float) * channels);
-    h_pb = (float *)malloc(sizeof(float) * channels);
-
-    // 2. LayerNorm params
-    CUDA_CHECK(cudaMalloc(&d_n1_bias,  sizeof(half)*channels));
-    CUDA_CHECK(cudaMalloc(&d_n1_scale, sizeof(half)*channels));
-    CUDA_CHECK(cudaMalloc(&d_n2_bias,  sizeof(half)*channels));
-    CUDA_CHECK(cudaMalloc(&d_n2_scale, sizeof(half)*channels));
-
-    // 3. MLP weights/biases
-    size_t bytes_fc1 = sizeof(half)*k_channels*channels;
-    size_t bytes_fc2 = sizeof(half)*channels*k_channels;
-    size_t bytes_b1  = sizeof(half)*k_channels;
-    size_t bytes_b2  = sizeof(half)*channels;
-    size_t bytes_b1_mtx = sizeof(half)*hidden_elements_number;
-    size_t bytes_b2_mtx = sizeof(half)*input_elements_number;
-
-    CUDA_CHECK(cudaMalloc(&d_fc1,     bytes_fc1));
-    CUDA_CHECK(cudaMalloc(&d_b1_data, bytes_b1));
-    CUDA_CHECK(cudaMalloc(&d_fc2,     bytes_fc2));
-    CUDA_CHECK(cudaMalloc(&d_b2_data, bytes_b2));
-    if(kernel_type) {
-        CUDA_CHECK(cudaMalloc(&d_b1_mtx,  bytes_b1_mtx));
-        CUDA_CHECK(cudaMalloc(&d_b2_mtx,  bytes_b2_mtx));
-    }
-
-
-    // 4. host debug buffer for pulling results back
-    h_debug_out = (half*)malloc(sizeof(half) * input_elements_number);
-
-    //5. set all the weights on the device and host respectively
-    set_data(
-        n1b_data,
-        n1g_data,
-        n2b_data,
-        n2g_data,
-    
-        q_data,
-        k_data,
-        v_data,
-        p_data, 
-        qb_data,
-        kb_data,
-        vb_data,
-        pb_data,
-
-        A1_data,
-        b1_data,
-        A2_data,
-        b2_data
-    );
-
-    //6. Initialize the attention descriptors
-    if(initialize_descriptors)
-        init_attn_descriptor(
-            h_q , 
-            h_k ,
-            h_v ,
-            h_p ,
-            h_qb,
-            h_kb,
-            h_vb,
-            h_pb
-        );
-
-}
-
 GpuBlock::GpuBlock(
     cudaStream_t     &_stream,
     cudnnHandle_t    &_cudnn_handle,
@@ -1059,6 +732,26 @@ void GpuBlock::set_data(
     }
 }
 
+void GpuBlock::set_weights_data(
+    void* d_n1_bias_, void* d_n1_scale_, void* d_n2_bias_, void* d_n2_scale_, 
+    void* d_fc1_    , void* d_b1_data_, void* d_b1_mtx_ ,
+    void* d_fc2_    , void* d_b2_data_, void* d_b2_mtx_ ,
+    void* d_attn_weights, size_t weights_bytes
+){
+    d_n1_bias  = d_n1_bias_ ;
+    d_n1_scale = d_n1_scale_;
+    d_n2_bias  = d_n2_bias_ ;
+    d_n2_scale = d_n2_scale_;
+    d_fc1      = d_fc1_     ;
+    d_b1_data  = d_b1_data_ ;
+    d_b1_mtx   = d_b1_mtx_  ;
+    d_fc2      = d_fc2_     ;
+    d_b2_data  = d_b2_data_ ;
+    d_b2_mtx   = d_b2_mtx_  ;
+    fused_desc.dWeights = d_attn_weights;
+    fused_desc.weightBytes = weights_bytes;
+}
+
 // Replace matmul descriptors (e.g. autotuned algos)
 void GpuBlock::set_matmul_descriptors(
     const cublasLt_matmul_desc newMatmul[2],
@@ -1422,4 +1115,330 @@ void GpuBlock::populate_rand(float * h_var, u_int dim){
     generate_reference<<<blocks_n, 256>>>(d_buffer, dim, rand_scale); 
     CUDA_CHECK(cudaMemcpy(h_var,d_buffer,sizeof(float) * dim,cudaMemcpyDeviceToHost));
     
+}
+
+GpuBlock::GpuBlock(
+    u_int B_, u_int T_, u_int C_, u_int K_,
+    bool kernel_type_,
+    double epsilon_, float scale_, int num_heads_,
+    float rand_scale_
+): batch(B_), tokens(T_), channels(C_), k_channels(K_),
+    kernel_type(kernel_type_), 
+    epsilon(epsilon_), scale(scale_), num_heads(num_heads_), rand_scale(rand_scale_)
+{
+    /* -- Initialize all the descriptors -- */
+    assert(channels % num_heads == 0);
+    // 1. Create stream
+    CUDA_CHECK(cudaStreamCreate(&stream));
+
+    // 2. Create cuBLASLt handle
+    CUBLAS_CHECK(cublasLtCreate(&ltHandle));
+
+    // 3. Create cuDNN handle
+    CUDNN_CHECK(cudnnCreate(&cudnnHandle));
+    CUDNN_CHECK(cudnnSetStream(cudnnHandle, stream));
+
+    // 4. Allocate main activation buffers on device
+    input_elements_number = batch * tokens * channels;
+    hidden_elements_number = batch * tokens * k_channels;
+    size_t bytes_input = sizeof(half) * input_elements_number;
+    size_t bytes_hidden  = sizeof(half) * hidden_elements_number;
+
+    CUDA_CHECK(cudaMalloc(&d_x, bytes_input));  CUDA_CHECK(cudaMemset(d_x, 0, bytes_input));
+    CUDA_CHECK(cudaMalloc(&d_t, bytes_input));  CUDA_CHECK(cudaMemset(d_t, 0, bytes_input));
+    CUDA_CHECK(cudaMalloc(&d_y, bytes_input));  CUDA_CHECK(cudaMemset(d_y, 0, bytes_input));
+    CUDA_CHECK(cudaMalloc(&d_h, bytes_hidden)); CUDA_CHECK(cudaMemset(d_h, 0, bytes_hidden));
+    
+
+    // 5. Attention variables
+    h_q  = (float *)malloc(sizeof(float) * channels * channels);
+    h_k  = (float *)malloc(sizeof(float) * channels * channels);
+    h_v  = (float *)malloc(sizeof(float) * channels * channels);
+    h_p  = (float *)malloc(sizeof(float) * channels * channels);
+    h_qb = (float *)malloc(sizeof(float) * channels);
+    h_kb = (float *)malloc(sizeof(float) * channels);
+    h_vb = (float *)malloc(sizeof(float) * channels);
+    h_pb = (float *)malloc(sizeof(float) * channels);
+
+    // 6. LayerNorm params
+    CUDA_CHECK(cudaMalloc(&d_n1_bias,  sizeof(half)*channels));
+    CUDA_CHECK(cudaMalloc(&d_n1_scale, sizeof(half)*channels));
+    CUDA_CHECK(cudaMalloc(&d_n2_bias,  sizeof(half)*channels));
+    CUDA_CHECK(cudaMalloc(&d_n2_scale, sizeof(half)*channels));
+
+    // 7. MLP weights/biases
+    size_t bytes_fc1 = sizeof(half)*k_channels*channels;
+    size_t bytes_fc2 = sizeof(half)*channels*k_channels;
+    size_t bytes_b1  = sizeof(half)*k_channels;
+    size_t bytes_b2  = sizeof(half)*channels;
+    size_t bytes_b1_mtx = sizeof(half)*hidden_elements_number;
+    size_t bytes_b2_mtx = sizeof(half)*input_elements_number;
+
+    CUDA_CHECK(cudaMalloc(&d_fc1,     bytes_fc1));
+    CUDA_CHECK(cudaMalloc(&d_b1_data, bytes_b1));
+    CUDA_CHECK(cudaMalloc(&d_fc2,     bytes_fc2));
+    CUDA_CHECK(cudaMalloc(&d_b2_data, bytes_b2));
+    if(kernel_type) {
+        CUDA_CHECK(cudaMalloc(&d_b1_mtx,  bytes_b1_mtx));
+        CUDA_CHECK(cudaMalloc(&d_b2_mtx,  bytes_b2_mtx));
+    }
+    // 8. cuBLASLt MLP descriptors
+    mlp_dimensions mdim(batch, tokens, channels, k_channels, channels);
+    CUDA_CHECK(cudaMalloc(&d_workspace_mlp, (size_t)MLP_WORKSPACE_SIZE));
+    create_mlp_descriptors(ltHandle, matmul, d_workspace_mlp, algo, mdim, kernel_type);
+
+
+    // 9. Optional transpose descriptors if kernel_type == true (like your code)
+    if (kernel_type) {
+        cublasOperation_t op = CUBLAS_OP_T;
+
+        CUBLAS_CHECK(cublasLtMatrixTransformDescCreate(&transposeDesc, CUDA_R_32F));
+        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&mlp_out_desc, CUDA_R_16F, /*rows*/batch*tokens, /*cols*/channels, /*ld*/batch*tokens));
+        CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&res_in_desc, CUDA_R_16F, /*rows*/channels, /*cols*/batch*tokens, /*ld*/channels));
+        CUBLAS_CHECK(cublasLtMatrixTransformDescSetAttribute(
+            transposeDesc, CUBLASLT_MATRIX_TRANSFORM_DESC_TRANSA, &op, sizeof(op)
+        ));
+    }
+
+
+    // 10. host debug buffer for pulling results back
+    h_debug_out = (half*)malloc(sizeof(half) * input_elements_number);
+
+}
+
+/*
+`initialize_descriptors`: if true, it will create and initialize the stream, handles and mlp descriptors
+*/
+GpuBlock::GpuBlock(
+    u_int B_, u_int T_, u_int C_, u_int K_,
+    void * d_x_, void * d_h_, void * d_t_, void * d_y_,
+    bool kernel_type_,
+    double epsilon_, float scale_, int num_heads_,
+    float rand_scale_, 
+    bool initialize_descriptors,
+    bool allocate_weights
+): batch(B_), tokens(T_), channels(C_), k_channels(K_),
+    d_x(d_x_), d_h(d_h_), d_t(d_t_), d_y(d_y_),
+    kernel_type(kernel_type_), 
+    epsilon(epsilon_), scale(scale_), num_heads(num_heads_), rand_scale(rand_scale_)
+{
+    // 0. Initialize all the descriptors
+    assert(channels % num_heads == 0);
+    if(initialize_descriptors){
+        // 1. Create stream
+        CUDA_CHECK(cudaStreamCreate(&stream));
+
+        // 2. Create cuBLASLt handle
+        CUBLAS_CHECK(cublasLtCreate(&ltHandle));
+
+        // 3. Create cuDNN handle
+        CUDNN_CHECK(cudnnCreate(&cudnnHandle));
+        CUDNN_CHECK(cudnnSetStream(cudnnHandle, stream));
+
+        // 8. cuBLASLt MLP descriptors
+        mlp_dimensions mdim(batch, tokens, channels, k_channels, channels);
+        CUDA_CHECK(cudaMalloc(&d_workspace_mlp, (size_t)MLP_WORKSPACE_SIZE));
+        create_mlp_descriptors(ltHandle, matmul, d_workspace_mlp, algo, mdim, kernel_type);
+    
+
+        // 9. Optional transpose descriptors if kernel_type == true (like your code)
+        if (kernel_type) {
+            cublasOperation_t op = CUBLAS_OP_T;
+
+            CUBLAS_CHECK(cublasLtMatrixTransformDescCreate(&transposeDesc, CUDA_R_32F));
+            CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&mlp_out_desc, CUDA_R_16F, /*rows*/batch*tokens, /*cols*/channels, /*ld*/batch*tokens));
+            CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&res_in_desc, CUDA_R_16F, /*rows*/channels, /*cols*/batch*tokens, /*ld*/channels));
+            CUBLAS_CHECK(cublasLtMatrixTransformDescSetAttribute(
+                transposeDesc, CUBLASLT_MATRIX_TRANSFORM_DESC_TRANSA, &op, sizeof(op)
+            ));
+        }
+    }
+
+    // 1. Allocate main activation buffers on device
+    input_elements_number = batch * tokens * channels;
+    hidden_elements_number = batch * tokens * k_channels;
+
+    // 2. Attention variables
+    h_q  = (float *)malloc(sizeof(float) * channels * channels);
+    h_k  = (float *)malloc(sizeof(float) * channels * channels);
+    h_v  = (float *)malloc(sizeof(float) * channels * channels);
+    h_p  = (float *)malloc(sizeof(float) * channels * channels);
+    h_qb = (float *)malloc(sizeof(float) * channels);
+    h_kb = (float *)malloc(sizeof(float) * channels);
+    h_vb = (float *)malloc(sizeof(float) * channels);
+    h_pb = (float *)malloc(sizeof(float) * channels);
+
+    // 3. LayerNorm params
+    if(allocate_weights){
+        CUDA_CHECK(cudaMalloc(&d_n1_bias,  sizeof(half)*channels));
+        CUDA_CHECK(cudaMalloc(&d_n1_scale, sizeof(half)*channels));
+        CUDA_CHECK(cudaMalloc(&d_n2_bias,  sizeof(half)*channels));
+        CUDA_CHECK(cudaMalloc(&d_n2_scale, sizeof(half)*channels));
+    }
+    // 4. MLP weights/biases
+    size_t bytes_fc1 = sizeof(half)*k_channels*channels;        
+    size_t bytes_fc2 = sizeof(half)*channels*k_channels;        
+    size_t bytes_b1  = sizeof(half)*k_channels;                 
+    size_t bytes_b2  = sizeof(half)*channels;                   
+    size_t bytes_b1_mtx = sizeof(half)*hidden_elements_number;
+    size_t bytes_b2_mtx = sizeof(half)*input_elements_number;
+    if(allocate_weights){
+        CUDA_CHECK(cudaMalloc(&d_fc1,     bytes_fc1));
+        CUDA_CHECK(cudaMalloc(&d_b1_data, bytes_b1));
+        CUDA_CHECK(cudaMalloc(&d_fc2,     bytes_fc2));
+        CUDA_CHECK(cudaMalloc(&d_b2_data, bytes_b2));
+        if(kernel_type) {
+            CUDA_CHECK(cudaMalloc(&d_b1_mtx,  bytes_b1_mtx));
+            CUDA_CHECK(cudaMalloc(&d_b2_mtx,  bytes_b2_mtx));
+        }
+    }
+
+
+    // 5. host debug buffer for pulling results back
+    h_debug_out = (half*)malloc(sizeof(half) * input_elements_number);
+
+}
+
+
+GpuBlock::GpuBlock(
+    u_int B_, u_int T_, u_int C_, u_int K_,
+    bool kernel_type_,
+    double epsilon_, float scale_,
+    //Layer norm
+    float* n1b_data,
+    float* n1g_data,
+    float* n2b_data,
+    float* n2g_data,
+    //Attention
+    float* q_data,
+    float* k_data,
+    float* v_data,
+    float* p_data,   // O proj
+    float* qb_data,
+    float* kb_data,
+    float* vb_data,
+    float* pb_data,
+    //Mlp
+    float* A1_data,  // fc1 weights KxC
+    float* b1_data,  // fc1 bias   K
+    float* A2_data,  // fc2 weights MxK
+    float* b2_data,   // fc2 bias   M
+
+    int num_heads_,
+    float rand_scale_,
+    bool initialize_descriptors
+):
+batch(B_), tokens(T_), channels(C_), k_channels(K_),
+kernel_type(kernel_type_), 
+epsilon(epsilon_), scale(scale_), num_heads(num_heads_), rand_scale(rand_scale_)
+{
+    assert(channels % num_heads == 0);
+
+    // 0. Allocate main activation buffers on device
+    input_elements_number = batch * tokens * channels;
+    hidden_elements_number = batch * tokens * k_channels;
+
+    /* -- Initialize all the descriptors -- */
+    if(initialize_descriptors){
+        // 1. Create stream
+        CUDA_CHECK(cudaStreamCreate(&stream));
+
+        // 2. Create cuBLASLt handle
+        CUBLAS_CHECK(cublasLtCreate(&ltHandle));
+
+        // 3. Create cuDNN handle
+        CUDNN_CHECK(cudnnCreate(&cudnnHandle));
+        CUDNN_CHECK(cudnnSetStream(cudnnHandle, stream));
+
+        // 5. cuBLASLt MLP descriptors
+        mlp_dimensions mdim(batch, tokens, channels, k_channels, channels);
+        CUDA_CHECK(cudaMalloc(&d_workspace_mlp, (size_t)MLP_WORKSPACE_SIZE));
+        create_mlp_descriptors(ltHandle, matmul, d_workspace_mlp, algo, mdim, kernel_type);
+    
+
+        // 6. Optional transpose descriptors if kernel_type == true (like your code)
+        if (kernel_type) {
+            cublasOperation_t op = CUBLAS_OP_T;
+
+            CUBLAS_CHECK(cublasLtMatrixTransformDescCreate(&transposeDesc, CUDA_R_32F));
+            CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&mlp_out_desc, CUDA_R_16F, /*rows*/batch*tokens, /*cols*/channels, /*ld*/batch*tokens));
+            CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&res_in_desc, CUDA_R_16F, /*rows*/channels, /*cols*/batch*tokens, /*ld*/channels));
+            CUBLAS_CHECK(cublasLtMatrixTransformDescSetAttribute(
+                transposeDesc, CUBLASLT_MATRIX_TRANSFORM_DESC_TRANSA, &op, sizeof(op)
+            ));
+        }
+    }
+
+    // 1. Attention variables
+    h_q  = (float *)malloc(sizeof(float) * channels * channels);
+    h_k  = (float *)malloc(sizeof(float) * channels * channels);
+    h_v  = (float *)malloc(sizeof(float) * channels * channels);
+    h_p  = (float *)malloc(sizeof(float) * channels * channels);
+    h_qb = (float *)malloc(sizeof(float) * channels);
+    h_kb = (float *)malloc(sizeof(float) * channels);
+    h_vb = (float *)malloc(sizeof(float) * channels);
+    h_pb = (float *)malloc(sizeof(float) * channels);
+
+    // 2. LayerNorm params
+    CUDA_CHECK(cudaMalloc(&d_n1_bias,  sizeof(half)*channels));
+    CUDA_CHECK(cudaMalloc(&d_n1_scale, sizeof(half)*channels));
+    CUDA_CHECK(cudaMalloc(&d_n2_bias,  sizeof(half)*channels));
+    CUDA_CHECK(cudaMalloc(&d_n2_scale, sizeof(half)*channels));
+
+    // 3. MLP weights/biases
+    size_t bytes_fc1 = sizeof(half)*k_channels*channels;
+    size_t bytes_fc2 = sizeof(half)*channels*k_channels;
+    size_t bytes_b1  = sizeof(half)*k_channels;
+    size_t bytes_b2  = sizeof(half)*channels;
+    size_t bytes_b1_mtx = sizeof(half)*hidden_elements_number;
+    size_t bytes_b2_mtx = sizeof(half)*input_elements_number;
+
+    CUDA_CHECK(cudaMalloc(&d_fc1,     bytes_fc1));
+    CUDA_CHECK(cudaMalloc(&d_b1_data, bytes_b1));
+    CUDA_CHECK(cudaMalloc(&d_fc2,     bytes_fc2));
+    CUDA_CHECK(cudaMalloc(&d_b2_data, bytes_b2));
+    if(kernel_type) {
+        CUDA_CHECK(cudaMalloc(&d_b1_mtx,  bytes_b1_mtx));
+        CUDA_CHECK(cudaMalloc(&d_b2_mtx,  bytes_b2_mtx));
+    }
+
+
+    // 4. host debug buffer for pulling results back
+    h_debug_out = (half*)malloc(sizeof(half) * input_elements_number);
+
+    //5. set all the weights on the device and host respectively
+    set_data(
+        n1b_data,
+        n1g_data,
+        n2b_data,
+        n2g_data,
+    
+        q_data,
+        k_data,
+        v_data,
+        p_data, 
+        qb_data,
+        kb_data,
+        vb_data,
+        pb_data,
+
+        A1_data,
+        b1_data,
+        A2_data,
+        b2_data
+    );
+
+    //6. Initialize the attention descriptors
+    if(initialize_descriptors)
+        init_attn_descriptor(
+            h_q , 
+            h_k ,
+            h_v ,
+            h_p ,
+            h_qb,
+            h_kb,
+            h_vb,
+            h_pb
+        );
+
 }

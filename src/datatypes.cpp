@@ -920,6 +920,25 @@ vit_float PredictionBatch::get_probability_of_class(vit_size i, vit_size cls) co
     return prob_matrix[cls + (i*CLS)];
 }
 
+void PredictionBatch::get_prediction_probability_tensor(Tensor &out) const {
+    Tensor t(B, 1, CLS);
+
+    for (int i=0;i<B;++i) {
+        for (int cls=0;cls<CLS;++cls) {
+            t.set(i, 0, cls, get_probability_of_class(i, cls));
+        }
+    }
+
+    out = std::move(t);
+}
+
+void PredictionBatch::get_predictions(int *out) const {
+    for (int i=0;i<B;++i) {
+        out[i] = classes[i];
+    }
+}
+
+
 void PredictionBatch::print() const {
     std::cout << "Prediction[" << B << "], " << CLS << " classes:" << std::endl;
     for(int i=0;i<B;++i) {
