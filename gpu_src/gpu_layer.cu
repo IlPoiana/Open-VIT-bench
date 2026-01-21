@@ -401,7 +401,7 @@ __device__ void dev_unrolled_multi_elem_cub_ln(
     
     half c = __int2half_rn(EMBEDDINGS_SIZE);
        
-    //TO CHANGE, now not coalesced access!!!!
+
     #pragma unroll
     for(u_int i = 0; i< ELEMENTS_PER_TH; i++){
         th_data[i] = x_data[global_idx + blockDim.x * i];
@@ -653,6 +653,7 @@ __global__ void unrolled_multi_elem_cub_ln(
     using BlockReduce = cub::BlockReduce<half, CUB_LAYER_MULTI_BLOCK_DIM>;
     __shared__ __align__(16) BlockReduce::TempStorage cub_shared_storage;
     BlockReduce block_reduce(cub_shared_storage);
+    
     //Compute the stride between tokens
     u_int loop_idx = 0;
     #pragma unroll // This when the token embeddings and the token number is fixed will help a lot

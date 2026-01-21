@@ -4,10 +4,7 @@
 #define MLP_DATA_TYPE CUDA_R_16F// Half
 #define MLP_COMPUTE_DATA_TYPE CUBLAS_COMPUTE_32F_PEDANTIC //to avoid using tensor cores
 // #define MLP_COMPUTE_DATA_TYPE CUBLAS_COMPUTE_16F_PEDANTIC //to avoid using tensor cores
-#define MLP_WORKSPACE_SIZE WORKSPACE_SIZE //4194304 //4MB
-#ifndef MLP_BLOCK_DIM
-#define MLP_BLOCK_DIM 256
-#endif
+#define MLP_WORKSPACE_SIZE WORKSPACE_SIZE 
 
 #define SQRT_2_PI_fp16 hsqrt(__float2half(M_2_PIf32))
 #include <iostream>
@@ -55,7 +52,8 @@ cublasLtMatmulAlgo_t fetch_matmul_algos(cublasLtHandle_t &handle,cublasLt_matmul
 
 void strided_linear_layer(
     cublasLtHandle_t & handle, cudaStream_t & stream,
-    u_int B, u_int T, u_int K, u_int stride_val,
+    u_int B, u_int T, u_int K,
+    u_int stride_val, u_int block_dim,
     cublasLt_matmul_desc &matmul,cublasLtMatmulAlgo_t &algo,void * d_workspace,
     void * d_x, void * d_fc, void * d_b, 
     void * d_y, bool gelu
@@ -74,7 +72,7 @@ void gpu_mlp(
     u_int B, u_int T, u_int K,u_int M,
     cublasLt_matmul_desc * matmul,cublasLtMatmulAlgo_t * algo,void * d_workspace,
     void * d_x, void * d_fc1, void * d_h,void * d_b1, void * d_fc2, void * d_b2, 
-    void * d_y, int stride_val = 2
+    void * d_y, int stride_val = 2, int block_dim = 256
 );
 
 void fused_gpu_mlp(

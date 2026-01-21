@@ -57,6 +57,11 @@ GpuBlock& GpuBlock::operator=(GpuBlock&& other) noexcept{
 
     kernel_type = other.kernel_type;
     scale     = other.scale    ; 
+    ln_block_dim   = other.ln_block_dim   ;
+    ln_blocks_n    = other.ln_blocks_n    ;
+    mlp_stride_val = other.mlp_stride_val ;
+    mlp_block_dim  = other.mlp_block_dim  ;
+
     epsilon   = other.epsilon  ; 
     num_heads = other.num_heads; 
 
@@ -110,6 +115,10 @@ GpuBlock::GpuBlock(GpuBlock&& other) noexcept{
 
     kernel_type = other.kernel_type;
     scale     = other.scale    ; 
+    ln_block_dim   = other.ln_block_dim   ;
+    ln_blocks_n    = other.ln_blocks_n    ;
+    mlp_stride_val = other.mlp_stride_val ;
+    mlp_block_dim  = other.mlp_block_dim  ;
     epsilon   = other.epsilon  ; 
     num_heads = other.num_heads; 
 
@@ -208,6 +217,10 @@ GpuBlock::GpuBlock(
     // 1. Allocate main activation buffers on device
     input_elements_number = batch * tokens * channels;
     hidden_elements_number = batch * tokens * k_channels;
+
+    ln_block_dim = CUB_LAYER_MULTI_BLOCK_DIM;
+    ln_blocks_n = (batch * tokens) / TOKENS_PER_BLOCK;
+    assert(((batch * tokens) % TOKENS_PER_BLOCK) == 0);
 
     // 2. Attention variables
     h_q  = (float *)malloc(sizeof(float) * channels * channels);
@@ -494,6 +507,74 @@ void GpuBlock::random_data(bool attn_init, bool input){
         cout << "input" << endl;
         //Input data
         populate_rand(d_x, input_elements_number);
+    }
+}
+
+void GpuBlock::forward_vit(){
+    
+
+    //Variables init
+    half gpu_epsilon = __float2half(epsilon);
+
+    //-Layer Norm    
+    unrolled_multi_elem_cub_ln<<<ln_blocks_n, ln_block_dim, 0, stream>>>(
+        (half*)d_x, (half*)d_y,
+        (half *)d_n1_scale, (half *)d_n1_bias, 
+        gpu_epsilon
+    );
+
+    //-Attention
+    attention_device( 
+        cudnnHandle,
+        d_y, d_t,
+        fused_desc
+    );
+
+    //-Residual
+    residual_strided<<<tokens, mlp_block_dim, 0, stream>>>((half*)d_t,(half*)d_x, input_elements_number, scale);
+
+    //-Layer Norm    
+    unrolled_multi_elem_cub_ln<<<ln_blocks_n, ln_block_dim, 0, stream>>>(
+        (half*)d_x, (half*)d_y,
+        (half *)d_n2_scale, (half *)d_n2_bias, 
+        gpu_epsilon
+    );
+
+    //-MLP
+    if(kernel_type)
+    {
+        fused_gpu_mlp(
+            ltHandle,stream,
+            matmul, algo, d_workspace_mlp,
+            d_y, d_fc1, d_h, d_b1_mtx, d_fc2, d_b2_mtx,d_t
+        );
+
+        //Transpose
+        cublasLtMatrixTransform(
+            ltHandle, transposeDesc,
+            &mlp_alpha, d_t, mlp_out_desc,
+            &mlp_beta, nullptr, nullptr,
+            d_y, res_in_desc, stream
+        );
+
+        //-Residual
+        /*B elements per thread*/
+        residual_strided<<<tokens, mlp_block_dim, 0, stream>>>((half*)d_y, (half*)d_x, input_elements_number, scale);
+
+    }
+    else{ //not fused but without the transpose
+        gpu_mlp(
+            ltHandle,stream,
+            batch,tokens,k_channels,channels,
+            matmul, algo, d_workspace_mlp,
+            d_y, d_fc1, d_h,d_b1_data, d_fc2,d_b2_data,d_t,
+            mlp_stride_val, mlp_block_dim
+        );
+
+        //-Residual
+        /*B elements per thread*/
+        residual_strided<<<tokens, mlp_block_dim, 0, stream>>>((half*)d_t, (half*)d_x, input_elements_number, scale);
+
     }
 }
 

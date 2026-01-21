@@ -19,7 +19,7 @@ enum KERNEL_ID {
 };
 
 // 0)
-kernel_time bench_gpu_ln(
+benchmark_time bench_gpu_ln(
     half * d_x, half * d_y,
     half * d_scale, half * d_bias,
     int batch_size, int tokens, int embeddings
@@ -27,7 +27,7 @@ kernel_time bench_gpu_ln(
     int blocks_n =  batch_size * tokens;
     int threads_n = embeddings / 2;
     assert(embeddings % 2 == 0);
-    float avg_ms = time_kernel(WARM_UP, N, 0,[&]() {
+    benchmark_time k_time = time_kernel_variance(WARM_UP, N, 0,[&]() {
         gpu_layer_norm<<<blocks_n, threads_n>>>(
             embeddings,
             (half*)d_x, (half*)d_y,
@@ -35,18 +35,18 @@ kernel_time bench_gpu_ln(
             EPS
         );
     });
-    return kernel_time(avg_ms);
+    return k_time;
 }
 
 // 1)
-kernel_time bench_cub_ln(
+benchmark_time bench_cub_ln(
     half * d_x, half * d_y,
     half * d_scale, half * d_bias,
     int batch_size, int tokens
 ){
     int blocks_n =  batch_size * tokens;
     int threads_n = CUB_LAYER_BLOCK_DIM;
-    float avg_ms = time_kernel(WARM_UP, N, 0,[&]() {
+    benchmark_time k_time = time_kernel_variance(WARM_UP, N, 0,[&]() {
         cub_layer_norm<<<blocks_n, threads_n>>>(
             (half*)d_x, (half*)d_y,
             (half*)d_scale, (half*)d_bias,
@@ -55,11 +55,11 @@ kernel_time bench_cub_ln(
         );
     });
 
-    return kernel_time(avg_ms);
+    return k_time;
 }
 
 // 2)
-kernel_time bench_multi_tok_cub_ln(
+benchmark_time bench_multi_tok_cub_ln(
     half * d_x, half * d_y,
     half * d_scale, half * d_bias,
     int batch_size, int tokens, int tokens_per_block
@@ -67,7 +67,7 @@ kernel_time bench_multi_tok_cub_ln(
     int blocks_n =  (batch_size * tokens) / tokens_per_block;
     int threads_n = CUB_LAYER_BLOCK_DIM;
     assert((batch_size * tokens) % tokens_per_block == 0);
-    float avg_ms = time_kernel(WARM_UP, N, 0,[&]() {
+    benchmark_time k_time = time_kernel_variance(WARM_UP, N, 0,[&]() {
         cub_layer_norm<<<blocks_n, threads_n>>>(
             (half*)d_x, (half*)d_y,
             (half*)d_scale, (half*)d_bias,
@@ -76,11 +76,11 @@ kernel_time bench_multi_tok_cub_ln(
         );
     });
 
-    return kernel_time(avg_ms);
+    return k_time;
 }
 
 // 3)
-kernel_time bench_multi_tok_elem_cub_ln(
+benchmark_time bench_multi_tok_elem_cub_ln(
     half * d_x, half * d_y,
     half * d_scale, half * d_bias,
     int batch_size, int tokens, int tokens_per_block
@@ -88,7 +88,7 @@ kernel_time bench_multi_tok_elem_cub_ln(
     int blocks_n =  (batch_size * tokens) / tokens_per_block;
     int threads_n = CUB_LAYER_MULTI_BLOCK_DIM;
     assert((batch_size * tokens) % tokens_per_block == 0);
-    float avg_ms = time_kernel(WARM_UP, N, 0,[&]() {
+    benchmark_time k_time = time_kernel_variance(WARM_UP, N, 0,[&]() {
         multi_elem_cub_ln<<<blocks_n, threads_n>>>(
             (half*)d_x, (half*)d_y,
             (half*)d_scale, (half*)d_bias,
@@ -97,11 +97,11 @@ kernel_time bench_multi_tok_elem_cub_ln(
         );
     });
 
-    return kernel_time(avg_ms);
+    return k_time;
 }
 
 // 4) "mtec" stands for multi tokens & elements cub layer norm
-kernel_time bench_unrolled_mtec_ln(
+benchmark_time bench_unrolled_mtec_ln(
     half * d_x, half * d_y,
     half * d_scale, half * d_bias,
     int batch_size, int tokens
@@ -109,7 +109,7 @@ kernel_time bench_unrolled_mtec_ln(
     int blocks_n =  (batch_size * tokens) / TOKENS_PER_BLOCK;
     int threads_n = CUB_LAYER_MULTI_BLOCK_DIM;
     assert((batch_size * tokens) % TOKENS_PER_BLOCK == 0);
-    float avg_ms = time_kernel(WARM_UP, N, 0,[&]() {
+    benchmark_time k_time = time_kernel_variance(WARM_UP, N, 0,[&]() {
         unrolled_multi_elem_cub_ln<<<blocks_n, threads_n>>>(
             (half*)d_x, (half*)d_y,
             (half*)d_scale, (half*)d_bias,
@@ -117,7 +117,7 @@ kernel_time bench_unrolled_mtec_ln(
         );
     });
 
-    return kernel_time(avg_ms);
+    return k_time;
 }
 
 void single_run(
@@ -285,7 +285,7 @@ int main(int argc, char** argv)
 
     if (kernel_id == 0 || kernel_id == 1){        
         cout << "|| Gpu layer norm ||" << endl;
-        kernel_time avg_time = bench_gpu_ln(
+        benchmark_time avg_time = bench_gpu_ln(
             (half*)d_input, (half*)d_output,
             (half*)d_scale, (half*)d_bias,
             batch, tokens, embeddings
@@ -298,7 +298,7 @@ int main(int argc, char** argv)
     }
     if (kernel_id == 0 || kernel_id == 2){
         cout << "|| CUB layer norm ||" << endl;
-        kernel_time avg_time = bench_cub_ln(
+        benchmark_time avg_time = bench_cub_ln(
             (half*)d_input, (half*)d_output,
             (half*)d_scale, (half*)d_bias,
             batch, tokens
@@ -311,7 +311,7 @@ int main(int argc, char** argv)
     }
     if (kernel_id == 0 || kernel_id == 3){
         cout << "|| Multi-token CUB layer norm ||" << endl;
-        kernel_time avg_time = bench_multi_tok_cub_ln(
+        benchmark_time avg_time = bench_multi_tok_cub_ln(
             (half*)d_input, (half*)d_output,
             (half*)d_scale, (half*)d_bias,
             batch, tokens, tokens_per_block
@@ -323,8 +323,9 @@ int main(int argc, char** argv)
         avg_time.to_JSON(batch, new int[2]{2, tokens_per_block});
     }
     if (kernel_id == 0 || kernel_id == 4){
+        /*TO REMOVE*/ cout << "TO REMOVE: " << TOKENS_PER_BLOCK << " - " << ELEMENTS_PER_TH << endl;
         cout << "|| Multi-token & element CUB layer norm ||" << endl;
-        kernel_time avg_time = bench_multi_tok_elem_cub_ln(
+        benchmark_time avg_time = bench_multi_tok_elem_cub_ln(
             (half*)d_input, (half*)d_output,
             (half*)d_scale, (half*)d_bias,
             batch, tokens, tokens_per_block
@@ -336,7 +337,7 @@ int main(int argc, char** argv)
     }
     if (kernel_id == 0 || kernel_id == 5){
         cout << "|| Unrolled Multi-token & element CUB layer norm ||" << endl;
-        kernel_time avg_time = bench_unrolled_mtec_ln(
+        benchmark_time avg_time = bench_unrolled_mtec_ln(
             (half*)d_input, (half*)d_output,
             (half*)d_scale, (half*)d_bias,
             batch, tokens

@@ -25,21 +25,24 @@ struct block_time{
         cout << "   Attention time(ms): " << attn_time << endl;
     }
 
+    //`params`: 0 block_dim, 1 stride_val, 2 mlp_type
     void to_JSON(int batch, int params[]){
-        int tokens_per_block = params[0];
+        int block_dim       = params[0];
         int stride_val      = params[1];
         bool mlp_type       = params[2];  
 
         cout << "{\n"
             << "\"batch\":" << batch << ",\n"
             << "\"params\": {\n" 
-                << "\"tokens_per_block\":" << tokens_per_block << ",\n"
-                << "\"stride_val\":" << stride_val << ",\n"
+            << "\"tokens_per_block\":" << TOKENS_PER_BLOCK << ",\n"
+            << "\"elements_per_th\":" << ELEMENTS_PER_TH << ",\n"
+            << "\"mlp_block_dim\":" << block_dim << ",\n"
+            << "\"mlp_stride_val\":" << stride_val << ",\n"
                 << "\"mlp_type\":" << mlp_type << "\n"
             << "},\n"
             << "\"time\": {\n" 
                 << "\"total_time\":" << total_time << ",\n"
-                << "\"attn_time\":" << attn_time << ",\n"
+                << "\"attn_time\":" << attn_time << "\n"
             << "}\n"
             << "}\n";
     }
@@ -53,7 +56,7 @@ block_time full_block(
     half * gpu_fc1, half *gpu_b1, half *gpu_fc2, half *gpu_b2,
     attn_data_gpu<half> &gpu_attn_weights,
     half *gpu_output, //For CPU comparison
-    int tokens_per_block, int stride_val,
+    int stride_val, int block_dim,
     int scale, int num_heads,
     bool mlp_type = false
 ){
@@ -67,6 +70,9 @@ block_time full_block(
         false, false
     );
 
+    block.mlp_block_dim     = block_dim;
+    block.mlp_stride_val    = stride_val;
+
     block.set_buffers(d_x, d_t, d_y, d_h, d_workspace);
     block.init_descriptors();
     block.allocate_weights();
@@ -78,10 +84,10 @@ block_time full_block(
         gpu_attn_weights
     );
     CUDA_CHECK(cudaDeviceSynchronize());
-    block.forward(false, tokens_per_block);
+    block.forward_vit();
     CUDA_CHECK(cudaMemcpy(gpu_output, d_x, sizeof(half) * total_elem_n, cudaMemcpyDeviceToHost));
     float avg_ms = time_kernel(WARM_UP, N, stream,[&]() {
-        block.forward(false, tokens_per_block);
+        block.forward_vit();
     });
 
     block.destroy_descriptors();
@@ -96,7 +102,7 @@ void single_run(
     half * gpu_fc1, half *gpu_b1, half *gpu_fc2, half *gpu_b2,
     attn_data_gpu<half> &gpu_attn_weights,
     half *gpu_output, //For CPU comparison
-    int tokens_per_block, int stride_val,
+    int stride_val, int block_dim,
     int scale, int num_heads,
     bool mlp_type = false
 ){
@@ -109,6 +115,8 @@ void single_run(
         EPS, scale, num_heads,
         false, false
     );
+    block.mlp_block_dim     = block_dim;
+    block.mlp_stride_val    = stride_val;
 
     block.set_buffers(d_x, d_t, d_y, d_h, d_workspace);
     block.init_descriptors();
@@ -120,8 +128,8 @@ void single_run(
         gpu_fc2, gpu_b2,
         gpu_attn_weights
     );
-    // CUDA_CHECK(cudaDeviceSynchronize());
-    block.forward(false, tokens_per_block);
+
+    block.forward_vit();
     CUDA_CHECK(cudaMemcpy(gpu_output, d_x, sizeof(half) * total_elem_n, cudaMemcpyDeviceToHost));
 }
 
@@ -133,7 +141,7 @@ block_time all_times(
     half * gpu_fc1, half *gpu_b1, half *gpu_fc2, half *gpu_b2,
     attn_data_gpu<half> &gpu_attn_weights,
     half *gpu_output, //For CPU comparison
-    int tokens_per_block, int stride_val,
+    int stride_val, int block_dim,
     int scale, int num_heads,
     bool mlp_type = false
 ){
@@ -146,7 +154,7 @@ block_time all_times(
         gpu_fc1, gpu_b1, gpu_fc2, gpu_b2,
         gpu_attn_weights,
         gpu_output,
-        tokens_per_block, stride_val,
+        stride_val, block_dim,
         scale, num_heads,
         mlp_type
     ).total_time;
@@ -171,7 +179,6 @@ block_time all_times(
         gpu_attn_weights
     );
 
-    
     float avg_attn_time = time_kernel(WARM_UP, N, stream,[&]() {
         attention_device(
             cudnn_handle,
@@ -188,9 +195,10 @@ int main(int argc, char** argv)
 {
     int kernel_id           = get_arg(argc, argv, "--kernel", 0);
     int batch               = get_arg(argc, argv, "--batch", 32);
-    int tokens_per_block    = get_arg(argc, argv, "--tokens_per_block", 32);
     int stride_val          = get_arg(argc, argv, "--stride", 2);
+    int block_dim           = get_arg(argc, argv, "--block_dim", 256);
     bool mlp_type           = get_arg(argc, argv, "--mlp_type", 0) == 0 ? false : true;
+    bool cpu_comparison     = get_arg(argc, argv, "--cpu", 0);
     int tokens              = TOKENS_NUM_VIT;
     int embeddings          = EMBEDDINGS_SIZE;
     int hidden_channels     = MLP_HIDDEN;
@@ -205,8 +213,10 @@ int main(int argc, char** argv)
               << " num_heads:           " << num_heads << "\n"
               << " scale:               " << scale << "\n"
               << " mlp_type:            " << yesno(mlp_type) << "\n"
-              << " tokens_per_block:    " << tokens_per_block << "\n"
-              << " residual stride:     " << stride_val << "\n"
+              << " tokens_per_block:    " << TOKENS_PER_BLOCK << "\n"
+              << " elements_per_th:     " << ELEMENTS_PER_TH << "\n"
+              << " mlp stride:          " << stride_val << "\n"
+              << " mlp block_dim:       " << block_dim << "\n"
               << " warmup_iters:        " << WARM_UP << "\n"
               << " timed_iters:         " << N << "\n";
 
@@ -404,8 +414,8 @@ int main(int argc, char** argv)
     cpu_block.move_mlp(mlp);
     cpu_block.move_norm1(block_n1);
     cpu_block.move_norm2(block_n2);
-
-    cpu_block.forward(cpu_x, cpu_y);
+    if(cpu_comparison)
+        cpu_block.forward(cpu_x, cpu_y);
 
     if (kernel_id == 0 || kernel_id == 1){
         cout << "|| GPU Block ||" << endl;
@@ -418,13 +428,14 @@ int main(int argc, char** argv)
             gpu_fc1.data(), gpu_b1.data(),
             gpu_fc2.data(), gpu_b2.data(),
             gpu_attn_weights, gpu_output.data(),
-            stride_val, tokens_per_block,
+            stride_val, block_dim,
             scale, num_heads,
             mlp_type
         );
-        cout << "Last iteration comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+        if(cpu_comparison)
+            cout << "Last iteration comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
         res_time.print();
-        res_time.to_JSON(batch, new int[3]{tokens_per_block, stride_val, mlp_type});
+        res_time.to_JSON(batch, new int[3]{block_dim, stride_val, mlp_type});
     }
     if (kernel_id == 0 || kernel_id == 2){
         cout << "|| Single Run ||" << endl;
@@ -440,12 +451,12 @@ int main(int argc, char** argv)
             gpu_fc1.data(), gpu_b1.data(),
             gpu_fc2.data(), gpu_b2.data(),
             gpu_attn_weights, gpu_output.data(),
-            stride_val, tokens_per_block,
+            stride_val, block_dim,
             scale, num_heads,
             mlp_type
         );
-
-        cout << "Comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+        if(cpu_comparison)
+            cout << "Comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
     }
 
     if (kernel_id == 0 || kernel_id == 3){
@@ -462,14 +473,14 @@ int main(int argc, char** argv)
             gpu_fc1.data(), gpu_b1.data(),
             gpu_fc2.data(), gpu_b2.data(),
             gpu_attn_weights, gpu_output.data(),
-            stride_val, tokens_per_block,
+            stride_val, block_dim,
             scale, num_heads,
             mlp_type
         );
-
-        cout << "Comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+        if(cpu_comparison)
+            cout << "Comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
         res_time.print();
-        res_time.to_JSON(batch, new int[3]{tokens_per_block, stride_val, mlp_type});
+        res_time.to_JSON(batch, new int[3]{block_dim, stride_val, mlp_type});
     }
 
     // - Cleanup

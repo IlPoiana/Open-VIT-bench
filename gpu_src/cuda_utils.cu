@@ -33,15 +33,6 @@ __global__ void add_strided(half * x, half * val_array, u_int N) {
     return;
 }
 
-benchmark_time::benchmark_time(std::vector<float> pre, float& k): kernel(k){
-    preprocess = std::move(pre);
-}
-
-benchmark_time::benchmark_time(){
-    kernel = 0.0;
-    preprocess = {};
-}
-
 float result_check_fp16(half * x, half * reference, size_t n){
     float sum = 0.0;
     for (size_t i = 0; i < n; ++i) sum += fabs(__half2float( reference[i]) - __half2float(x[i]));
@@ -84,21 +75,6 @@ void rand_init(half * h_out, u_int n, float rand_scale, u_long seed){
     half * d_buffer; cudaMalloc(&d_buffer, sizeof(half) * n);
     generate_reference<<<blocks_n, 256>>>(d_buffer, n, rand_scale, seed); 
     CUDA_CHECK(cudaMemcpy(h_out,d_buffer,sizeof(half) * n,cudaMemcpyDeviceToHost));    // GPU Single Stream
-}
-
-void print_time(benchmark_time time)
-{
-    for(u_int i = 0; i < time.preprocess.size(); i++){
-        printf("preprocess time[%d]: %f\n", i,time.preprocess.at(i));        
-    }
-    printf("kernel elapsed time: %f\n", time.kernel);
-}
-
-void print_json_time(benchmark_time time, const std::vector<std::string>& preprocess_names){
-    for(u_int i = 0; i < time.preprocess.size(); i++){
-        printf("\"%s\":%f,\n", (preprocess_names.at(i)).c_str(),time.preprocess.at(i));        
-    }
-    printf("\"kernel\": %f\n", time.kernel);
 }
 
 void linearize(float * data, float * linearized_data, picture_shape input_img, conv_kernel_shape kernel)

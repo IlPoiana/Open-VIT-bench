@@ -20,6 +20,7 @@
 .vscode
 
 /deprecated
+/gpu_out
 
 *.nsys-rep
 cuBLAS.cu

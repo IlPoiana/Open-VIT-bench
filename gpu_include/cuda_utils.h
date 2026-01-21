@@ -9,6 +9,18 @@
 #include <bits/stdc++.h>
 #include <curand_kernel.h>
 
+#ifndef WORKSPACE_FLAG
+#define WORKSPACE_FLAG 0
+#endif
+
+#define WORKSPACE_SIZE size_t(1) << 33 // 8GB for testing components
+
+#if WORKSPACE_FLAG == 1
+    #undef WORKSPACE_SIZE
+// #define WORKSPACE_SIZE  1 << 26 // 64MB for multi stream
+    #define WORKSPACE_SIZE  1 << 29 // 512MB for multi stream
+#endif
+
 #define CUBLAS_CHECK(err)                                                         \
 do {                                                                              \
     cublasStatus_t err_ = (err);                                                 \
@@ -25,8 +37,7 @@ do {                                                                            
   CUDA_CHECK(cudaDeviceSynchronize()); /* catch async runtime errors */ \
 } while(0)
 
-#define MAX_STREAMS_CONV2D 32
-#define WORKSPACE_SIZE 128 << 20 // 32Mb
+
 
 using namespace std;
 
@@ -78,15 +89,6 @@ struct conv_kernel_shape {
     conv_kernel_shape();  
 };
 
-struct benchmark_time
-{
-    vector<float> preprocess;
-    float kernel;
-
-    benchmark_time(vector<float> pre, float &k);
-    benchmark_time();
-};
-
 
 // Converts n floats at `in` into n halves at `out` (round-to-nearest-even)
 inline void f32_to_f16(const float* in, __half* out, size_t n)
@@ -109,10 +111,9 @@ float result_check_fp16(half * x, float * reference, size_t n);
 
 __global__ void generate_reference(float * d_x, u_int total_n, float scale = 1.0f, u_long seed = 0);
 __global__ void generate_reference(half * d_x, u_int total_n, float scale = 1.0f, u_long seed = 0);
+
 void rand_init(float * h_out, u_int n, float rand_scale, u_long seed);
 
-void print_time(benchmark_time time);
-void print_json_time(benchmark_time time, const vector<string>& preprocess_names);
 inline string yesno(bool b){ return b ? "true" : "false"; };
 
 __global__ void add_strided(half * x, half * val_array, u_int N);

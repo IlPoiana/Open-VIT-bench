@@ -51,7 +51,7 @@ struct patch_emb_time{
                 << "\"total\":" << total << ",\n"
                 << "\"kernel\":" << kernel << ",\n"
                 << "\"transpose\":" << transpose << ",\n"
-                << "\"pos_embeddings\":" << pos_embeddings << ",\n"
+                << "\"pos_embeddings\":" << pos_embeddings << "\n"
             << "}\n"
             << "}\n";
     }
@@ -233,6 +233,7 @@ int main(int argc, char** argv){
     int block_dim           = get_arg(argc, argv, "--block_dim", 256);
     int transpose_stride    = get_arg(argc, argv, "--transpose_stride", 4);
     int pos_emb_stride      = get_arg(argc, argv, "--pos_emb_stride", 4);
+    bool cpu_comparison     = get_arg(argc, argv, "--cpu", 0);
 
     int channels = 3, height = 224, width = 224, Ho = 16, Wo = 16;
     convolution_dim conv_dim(batch, channels, height, width, embeddings, Ho, Wo);
@@ -299,15 +300,17 @@ int main(int argc, char** argv){
 
     void * d_y; CUDA_CHECK(cudaMalloc(&d_y, bytes_embedded_elements_num));
     // - Reference creation
-    Tensor cpu_y = cpu_baseline(
-        conv_dim,
-        h_conv_weights.data(),
-        h_bias.data(),
-        h_pos_emb.data(),
-        h_input.data(),
-        false
-    );
-
+    Tensor cpu_y;
+    if(cpu_comparison){
+        cpu_y = cpu_baseline(
+            conv_dim,
+            h_conv_weights.data(),
+            h_bias.data(),
+            h_pos_emb.data(),
+            h_input.data(),
+            false
+        );
+    }
     if(kernel == 0 || kernel == 1){
         cout << "|| Full times ||" << endl;
         patch_emb_time res_time = full_gpu_pe(
@@ -320,9 +323,10 @@ int main(int argc, char** argv){
             block_dim, transpose_stride, pos_emb_stride,
             d_y
         );
-
-        CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_y, bytes_embedded_elements_num, cudaMemcpyDeviceToHost));
-        cout << "Last iteration comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+        if(cpu_comparison){
+            CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_y, bytes_embedded_elements_num, cudaMemcpyDeviceToHost));
+            cout << "Last iteration comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+        }
         res_time.print();
         res_time.to_JSON(batch, new int[3]{transpose_stride, pos_emb_stride, block_dim});
 
@@ -339,9 +343,10 @@ int main(int argc, char** argv){
             block_dim, transpose_stride, pos_emb_stride,
             d_y
         );
-
-        CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_y, bytes_embedded_elements_num, cudaMemcpyDeviceToHost));
-        cout << "Single run comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+        if(cpu_comparison){
+            CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_y, bytes_embedded_elements_num, cudaMemcpyDeviceToHost));
+            cout << "Single run comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+        }
     }
 
     // - Cleanup

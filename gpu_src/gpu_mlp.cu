@@ -319,12 +319,12 @@ void linear_layer(
         &algo, d_workspace, (size_t)MLP_WORKSPACE_SIZE, stream
     ));
     // CUDA_CHECK(cudaStreamSynchronize(stream));
-
-    u_int block_num = ((B*T*K) / MLP_BLOCK_DIM) + 1;
+    u_int block_dim = 256;
+    u_int block_num = ((B*T*K) / block_dim) + 1;
     if(gelu)
-        bias_GELU<<<block_num, MLP_BLOCK_DIM,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
+        bias_GELU<<<block_num, block_dim,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
     else    
-        bias<<<block_num, MLP_BLOCK_DIM,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
+        bias<<<block_num, block_dim,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
     return;
@@ -336,7 +336,8 @@ void linear_layer(
 */
 void strided_linear_layer(
     cublasLtHandle_t & handle, cudaStream_t & stream,
-    u_int B, u_int T, u_int K, u_int stride_val,
+    u_int B, u_int T, u_int K, 
+    u_int stride_val, u_int block_dim,
     cublasLt_matmul_desc &matmul,cublasLtMatmulAlgo_t &algo,void * d_workspace,
     void * d_x, void * d_fc, void * d_b, 
     void * d_y, bool gelu
@@ -352,14 +353,12 @@ void strided_linear_layer(
         d_y, matmul.yDesc,
         &algo, d_workspace, (size_t)MLP_WORKSPACE_SIZE, stream
     ));
-    // CUDA_CHECK(cudaStreamSynchronize(stream));
 
-    u_int block_num = ((B*T*K) / (stride_val * MLP_BLOCK_DIM)) + 1;
+    u_int block_num = ((B*T*K) / (stride_val * block_dim)) + 1;
     if(gelu)
-        bias_GELU<<<block_num, MLP_BLOCK_DIM,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
+        bias_GELU<<<block_num, block_dim, 0, stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
     else    
-        bias<<<block_num, MLP_BLOCK_DIM,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
-    // CUDA_CHECK(cudaStreamSynchronize(stream));
+        bias<<<block_num, block_dim, 0, stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
 
     return;
 
@@ -423,18 +422,20 @@ void gpu_mlp(
     u_int B, u_int T, u_int K,u_int M,
     cublasLt_matmul_desc * matmul,cublasLtMatmulAlgo_t * algo,void * d_workspace,
     void * d_x, void * d_fc1, void * d_h,void * d_b1, void * d_fc2, void * d_b2, 
-    void * d_y, int stride_val
+    void * d_y, int stride_val, int block_dim
 ){
     strided_linear_layer(
         handle,stream, 
-        B,  T, K, stride_val,
+        B,  T, K,
+        stride_val, block_dim,
         matmul[0], algo[0], d_workspace,
         d_x, d_fc1, d_b1, d_h, 
         true
     );
     strided_linear_layer(
         handle,stream,
-        B,  T, M, stride_val,
+        B,  T, M,
+        stride_val, block_dim,
         matmul[1], algo[1], d_workspace,
         d_h, d_fc2, d_b2, d_y,
         false

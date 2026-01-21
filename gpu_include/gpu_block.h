@@ -48,6 +48,11 @@ public:
     float scale = LAYER_SCALE; //scale applied before the residual
     float epsilon = 0.00001;   //epsilon value for the layer norm
     int num_heads = 1;         //multi-head attention heads number
+    int ln_block_dim;
+    int ln_blocks_n;
+    int mlp_stride_val = 4;
+    int mlp_block_dim = 256;
+
 
     // CUDA stream
     cudaStream_t stream;
@@ -239,7 +244,8 @@ public:
     */
     void random_data(bool attn_init, bool input = true);
 
-    //random input generation, the result is stored in dx
+    void forward_vit();
+    
     // - `debug`: if true, puts the result in the h_debug_out
     void forward(bool debug = false, u_int tokens_per_block = 2);
 

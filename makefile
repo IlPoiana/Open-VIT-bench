@@ -48,6 +48,14 @@ CUDA_FLAGS := $(ARCH) -lcublas -lcublasLt
 CUDNN_FE := -I/home/emanuele.poiana/Open-VIT-bench/cudnn
 CUDNN_FLAGS := -lcuda -lcudnn
 
+# GPU COMPILE FLAGS FOR HYPERPARAMS SELECTION
+# LAYER NORM
+TOKENS_PER_BLOCK := 4
+ELEMENTS_PER_TH := 4
+# WORKSPACE SIZE
+MULTI_STREAM_WORKSPACE = 0
+WORKSPACE_FLAG := -DWORKSPACE_FLAG=$(MULTI_STREAM_WORKSPACE)
+
 all : vit
 
 clean :
@@ -158,27 +166,65 @@ $(TEST_OBJ_FOLDER)/%.o
 
 ########################## GPU IMPLEMENTATIONS 
 
-# ALL OBJ TARGET
-$(OBJ_FOLDER)/gpu_datatypes.o \
-$(OBJ_FOLDER)/gpu_conv2d.o \
-$(OBJ_FOLDER)/cuda_utils.o \
-$(OBJ_FOLDER)/gpu_vit.o \
-$(OBJ_FOLDER)/gpu_layer.o\
-$(OBJ_FOLDER)/gpu_mlp.o \
-$(OBJ_FOLDER)/cudnn_attention.o \
-$(OBJ_FOLDER)/cudnn_conv2d.o \
-$(OBJ_FOLDER)/gpu_block.o \
-$(OBJ_FOLDER)/gpu_patch_embedder.o \
-$(OBJ_FOLDER)/gpu_pred_head.o \
-$(OBJ_FOLDER)/bench_utils.o \
-: $(OBJ_FOLDER)/%.o : $(GPU_SRC_FOLDER)/%.cu
-	nvcc -c $(CUDA_FLAGS) $^ -o $@
-
 # ATTENTION !!!
 # COMPILING WITH sm=50, change ARCH for the cluster GPUs
+
+# ALL OBJ TARGET
+$(OBJ_FOLDER)/cuda_utils.o \
+$(OBJ_FOLDER)/gpu_datatypes.o \
+$(OBJ_FOLDER)/gpu_mlp.o \
+$(OBJ_FOLDER)/gpu_patch_embedder.o \
+$(OBJ_FOLDER)/cudnn_attention.o \
+$(OBJ_FOLDER)/cudnn_conv2d.o \
+$(OBJ_FOLDER)/bench_utils.o \
+: $(OBJ_FOLDER)/%.o : $(GPU_SRC_FOLDER)/%.cu
+	nvcc -c $(CUDA_FLAGS) $(WORKSPACE_FLAG) $^ -o $@
+
+$(OBJ_FOLDER)/gpu_layer.o\
+$(OBJ_FOLDER)/gpu_vit.o \
+$(OBJ_FOLDER)/gpu_pred_head.o \
+$(OBJ_FOLDER)/gpu_block.o \
+: $(OBJ_FOLDER)/%.o : $(GPU_SRC_FOLDER)/%.cu
+	nvcc -c $(CUDA_FLAGS) $(WORKSPACE_FLAG) -DTOKENS_PER_BLOCK=$(TOKENS_PER_BLOCK) -DELEMENTS_PER_TH=$(ELEMENTS_PER_TH) $^ -o $@
+
 $(OBJ_FOLDER)/cudnn_utils.o \
 : $(OBJ_FOLDER)/%.o : $(GPU_SRC_FOLDER)/%.cu
-	nvcc -c $(CUDA_FLAGS) $(CUDNN_FLAGS) $^ -o $@
+	nvcc -c $(CUDA_FLAGS) $(CUDNN_FLAGS) $(WORKSPACE_FLAG) $^ -o $@
+
+# LAYER NORM CLEAN
+clean_gpu_layer :
+	rm $(OBJ_FOLDER)/gpu_layer.o
+
+clean_gpu_block :
+	rm $(OBJ_FOLDER)/gpu_block.o
+
+clean_gpu_pred_head :
+	rm $(OBJ_FOLDER)/gpu_pred_head.o
+
+clean_gpu_libraries :
+	rm $(OBJ_FOLDER)/cuda_utils.o $(OBJ_FOLDER)/gpu_datatypes.o $(OBJ_FOLDER)/cudnn_utils.o \
+	   $(OBJ_FOLDER)/bench_utils.o
+
+clean_gpu_components :
+	rm $(OBJ_FOLDER)/gpu_mlp.o $(OBJ_FOLDER)/gpu_patch_embedder.o \
+	$(OBJ_FOLDER)/gpu_layer.o $(OBJ_FOLDER)/gpu_vit.o $(OBJ_FOLDER)/gpu_pred_head.o \
+	$(OBJ_FOLDER)/gpu_block.o $(OBJ_FOLDER)/cudnn_attention.o $(OBJ_FOLDER)/cudnn_conv2d.o
+
+clean_bench_layer : clean_gpu_layer
+	rm $(TEST_OBJ_FOLDER)/layer_norm_bench.o $(TEST_BIN_FOLDER)/layer_norm_bench.exe
+
+clean_bench_block : clean_gpu_layer clean_gpu_block
+	rm $(TEST_OBJ_FOLDER)/block_bench.o $(TEST_BIN_FOLDER)/block_bench.exe
+
+clean_bench_prediction_head : clean_gpu_layer
+	rm $(TEST_OBJ_FOLDER)/prediction_head_bench.o $(TEST_BIN_FOLDER)/prediction_head_bench.exe
+
+clean_bench_vit : clean_gpu_layer clean_gpu_block
+	rm $(TEST_OBJ_FOLDER)/vit_bench.o $(TEST_BIN_FOLDER)/vit_bench.exe
+
+clean_gpu : clean_gpu_libraries clean_gpu_components
+
+
 
 # CUSTOM AND BENCH TARGET
 # CUSTOM
@@ -277,15 +323,18 @@ $(GPU_COMMON) \
 $(TEST_OBJ_FOLDER)/%.o
 	nvcc $(CUDA_FLAGS) $(CUDNN_FLAGS) $^ -o $@
 
-
+# BENCHMARKS
 $(TEST_OBJ_FOLDER)/layer_norm_bench.o \
-$(TEST_OBJ_FOLDER)/mlp_bench.o \
-$(TEST_OBJ_FOLDER)/patch_embed_bench.o \
-$(TEST_OBJ_FOLDER)/block_bench.o \
 $(TEST_OBJ_FOLDER)/prediction_head_bench.o \
+$(TEST_OBJ_FOLDER)/block_bench.o \
 $(TEST_OBJ_FOLDER)/vit_bench.o \
 : $(TEST_OBJ_FOLDER)/%.o: $(BENCH_SRC_FOLDER)/%.cu
-	nvcc -c $(CUDA_FLAGS) $< -o $@
+	nvcc -c $(CUDA_FLAGS) $(WORKSPACE_FLAG) -DTOKENS_PER_BLOCK=$(TOKENS_PER_BLOCK) -DELEMENTS_PER_TH=$(ELEMENTS_PER_TH) $< -o $@
+
+$(TEST_OBJ_FOLDER)/mlp_bench.o \
+$(TEST_OBJ_FOLDER)/patch_embed_bench.o \
+: $(TEST_OBJ_FOLDER)/%.o: $(BENCH_SRC_FOLDER)/%.cu
+	nvcc -c $(CUDA_FLAGS) $(WORKSPACE_FLAG) $< -o $@
 
 test_bin/layer_norm_bench.exe \
 test_bin/mlp_bench.exe \

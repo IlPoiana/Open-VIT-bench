@@ -11,16 +11,18 @@
 
 using namespace std;
 
-struct kernel_time {
-    float time;
+struct benchmark_time {
+    float avg_time;
+    float variance;
 
-    kernel_time(float time) : time(time) {}
+    benchmark_time(float avg, float var) : avg_time(avg), variance(var) {}
 
     void print();
 
     //`params`: 0 - elements per thread, 1 - tokens per block
     void to_JSON(int batch, int params[]);
 };
+
 
 int get_arg(int argc, char** argv, const char* name, int default_val);
 
@@ -34,7 +36,14 @@ float time_kernel(
     std::function<void()> launch
 );
 
-float time_cpu(
+benchmark_time time_kernel_variance(
+    int warmup,
+    int iters,
+    cudaStream_t stream,
+    std::function<void()> launch
+);
+
+benchmark_time time_cpu(
     int warmup,
     int iters,
     std::function<void()> func

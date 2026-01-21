@@ -15,6 +15,7 @@
 #define MLP_HIDDEN 3072
 #define FULL_VIT_WARMUP 5
 #define FULL_VIT_N 10
+#define EPS 1e-6
 
 struct vit_predictions {
     half * predictions_probabilities;
@@ -56,13 +57,25 @@ struct vit_time{
     float class_setup_time;   //GPU
     float pics_load_time;       //GPU
     float forward_time;         //GPU
-    float total_time;           //CPU
+    benchmark_time total_time;           //CPU
 
     vit_time(
         float class_setup_time_ = 0.0f,
         float pics_load_time_ = 0.0f,
         float forward_time_ = 0.0f,
         float total_time_ = 0.0f
+    ):
+        class_setup_time(class_setup_time_),
+        pics_load_time(pics_load_time_),
+        forward_time(forward_time_),
+        total_time(total_time_, 0.0f)
+    {}
+
+    vit_time(
+        float class_setup_time_,
+        float pics_load_time_,
+        float forward_time_ ,
+        benchmark_time total_time_
     ):
         class_setup_time(class_setup_time_),
         pics_load_time(pics_load_time_),
@@ -74,14 +87,12 @@ struct vit_time{
         cout << "Class setup(shared & weights alloc + desc creation) : " << class_setup_time << " ms\n"
              << "Pics loading time (GPU)                             : " << pics_load_time << " ms\n"
              << "Forward time (GPU)                                  : " << forward_time << " ms\n"
-             << "Total time (CPU)                                    : " << total_time << " ms\n";
+             << "Total time (CPU)                                    : " << total_time.avg_time << " +"<< total_time.variance<< " ms\n";
     }
 
     void to_JSON(int streams_n, int batch_n, int minibatch_size, int batch_size, int params[]){
         int transpose_stride    = params[0];
         int add_stride          = params[1];
-        int tokens_per_block    = params[2];
-        int elements_per_thread = params[3];
 
         cout << "{\n"
             << "\"streams_n\": " << streams_n << ",\n"
@@ -91,39 +102,41 @@ struct vit_time{
             << "\"params\": {\n"
                 << "\"transpose_stride   \": " << transpose_stride    << ",\n"
                 << "\"add_stride         \": " << add_stride          << ",\n"
-                << "\"ln_tokens_per_block\": " << tokens_per_block    << ",\n"
-                << "\"ln_elem_per_thread\": "  << elements_per_thread << "\n"
+                << "\"ln_tokens_per_block\": " << TOKENS_PER_BLOCK    << ",\n"
+                << "\"ln_elem_per_thread\": "  << ELEMENTS_PER_TH << "\n"
             << "},\n"
             << "\"time\": {\n"
                 << "\"class_setup_time\":"   << class_setup_time << ",\n"
                 << "\"pics_load_time\":"     << pics_load_time << ",\n"
                 << "\"forward_time\":"       << forward_time << ",\n"
-                << "\"total_time\":"         << total_time << "\n"
-            << "}\n"
+                << "\"total_time\":"         << total_time.avg_time << ",\n"
+                << "\"var_total_time\":"     << total_time.variance << "\n"
+                << "}\n"
         << "}\n";
     }
 };
 
+// 1) Only setup time for creating the model and load the weights
 vit_time vit_setup(    
     cudaStream_t stream,cublasLtHandle_t cublas_handle,cudnnHandle_t cudnn_handle,
-    convolution_dim &conv_dim, int tokens, int tokens_per_block,
+    convolution_dim &conv_dim, int tokens,
     patch_emb_weights pe_w,
     vector<block_weights> blk_w,
     pred_head_weights ph_w
 ){
-    float avg_setup = time_cpu(WARM_UP, N, [&]() {
+    benchmark_time setup_time = time_cpu(WARM_UP, N, [&]() {
         // Create the model and init descriptors
         GpuVit gpu_vit(
             stream, cudnn_handle, cublas_handle,
             conv_dim, tokens, 
-            CLASS_N, DEPTH, HEADS_N, SCALE, MLP_HIDDEN,
+            CLASS_N, DEPTH, HEADS_N, SCALE, 
+            EPS, EPS,
+            MLP_HIDDEN,
             false, 
             false, 
             true, 
             false
         );
-
-        gpu_vit.tokens_per_block = tokens_per_block; 
 
         gpu_vit.allocate_shared_buffers(); //d_x, d_y, d_pred, d_t....
         gpu_vit.create_descriptors(); // all the descriptors
@@ -131,13 +144,15 @@ vit_time vit_setup(
         gpu_vit.load_weights(pe_w, blk_w, ph_w);
         CUDA_CHECK(cudaStreamSynchronize(stream)); 
     });
+    float avg_setup = setup_time.avg_time;
 
     return vit_time(avg_setup);
 }
 
+// 2) Only the forward of a single batch (no CPU compute predictions)
 vit_time vit_forward(
     cudaStream_t stream, cublasLtHandle_t cublas_handle, cudnnHandle_t cudnn_handle,
-    convolution_dim &conv_dim, int tokens, int tokens_per_block,
+    convolution_dim &conv_dim, int tokens,
     patch_emb_weights pe_w,
     vector<block_weights> blk_w,
     pred_head_weights ph_w,    
@@ -146,14 +161,14 @@ vit_time vit_forward(
     GpuVit gpu_vit(
         stream, cudnn_handle, cublas_handle,
         conv_dim, tokens, 
-        CLASS_N, DEPTH, HEADS_N, SCALE, MLP_HIDDEN,
+        CLASS_N, DEPTH, HEADS_N, SCALE, 
+        EPS, EPS,
+        MLP_HIDDEN,
         false, 
         false, 
         true, 
         false
     );
-
-    gpu_vit.tokens_per_block = tokens_per_block; 
 
     gpu_vit.allocate_shared_buffers(); //d_x, d_y, d_pred, d_t....
     gpu_vit.create_descriptors(); // all the descriptors
@@ -176,11 +191,11 @@ vit_time vit_forward(
     return vit_time(0.0f, avg_pics_load, avg_forward);
 }
 
-// From the model creation to the final classification, memory efficient approach
+// 3) From the model creation to the final classification, memory efficient approach
 vit_time full_vit_multi_prediction(
     cudaStream_t stream, cublasLtHandle_t cublas_handle, cudnnHandle_t cudnn_handle,
     int batch_n,
-    convolution_dim &conv_dim, int tokens, int tokens_per_block,
+    convolution_dim &conv_dim, int tokens,
     patch_emb_weights pe_w,
     vector<block_weights> blk_w,
     pred_head_weights ph_w,    
@@ -189,17 +204,19 @@ vit_time full_vit_multi_prediction(
     size_t batch_elements_n = conv_dim.batch * conv_dim.height * conv_dim.width * conv_dim.channels;
     half * gpu_pics_start = gpu_pics;
 
-    float total_time = time_cpu(FULL_VIT_WARMUP, FULL_VIT_N, [&]() {
+    benchmark_time total_time = time_cpu(FULL_VIT_WARMUP, FULL_VIT_N, [&]() {
         GpuVit gpu_vit(
             stream, cudnn_handle, cublas_handle,
             conv_dim, tokens, 
-            CLASS_N, DEPTH, HEADS_N, SCALE, MLP_HIDDEN,
+            CLASS_N, DEPTH, HEADS_N, SCALE,
+            EPS, EPS,
+            MLP_HIDDEN,
             false, 
             false, 
             true, 
             false
         );
-        gpu_vit.tokens_per_block = tokens_per_block; 
+
         gpu_vit.ph.unmark_host_arr();        
         free(gpu_vit.ph.class_prediction);
         gpu_vit.ph.class_prediction = gpu_predictions;
@@ -224,11 +241,11 @@ vit_time full_vit_multi_prediction(
     return vit_time(0.0f, 0.0f, 0.0f, total_time);
 }
 
-// From the model creation to the final classification, faster memory expensive approach
+// 4) From the model creation to the final classification, faster memory expensive approach
 vit_time full_vit_single_prediction(
     cudaStream_t stream, cublasLtHandle_t cublas_handle, cudnnHandle_t cudnn_handle,
     int batch_n,
-    convolution_dim &conv_dim, int tokens, int tokens_per_block,
+    convolution_dim &conv_dim, int tokens,
     patch_emb_weights pe_w,
     vector<block_weights> blk_w,
     pred_head_weights ph_w,    
@@ -237,17 +254,18 @@ vit_time full_vit_single_prediction(
     size_t batch_elements_n = conv_dim.batch * conv_dim.height * conv_dim.width * conv_dim.channels;
     half * gpu_pics_start = gpu_pics;
 
-    float total_time = time_cpu(FULL_VIT_WARMUP, FULL_VIT_N, [&]() {  
+    benchmark_time total_time = time_cpu(FULL_VIT_WARMUP, FULL_VIT_N, [&]() {  
         GpuVit gpu_vit(
             stream, cudnn_handle, cublas_handle,
             conv_dim, tokens, 
-            CLASS_N, DEPTH, HEADS_N, SCALE, MLP_HIDDEN,
+            CLASS_N, DEPTH, HEADS_N, SCALE,
+            EPS, EPS,
+            MLP_HIDDEN,
             false, 
             false, 
             true, 
             false
         );
-        gpu_vit.tokens_per_block = tokens_per_block; 
 
         vit_predictions predictions(batch_n * conv_dim.batch * CLASS_N, batch_n * conv_dim.batch);
         gpu_vit.ph.unmark_host_arr();        
@@ -277,34 +295,37 @@ vit_time full_vit_single_prediction(
     return vit_time(0.0f, 0.0f, 0.0f, total_time);
 }
 
+// 5) Multi stream approach
 vit_time multi_stream_full_vit(
     cudaStream_t stream[], cublasLtHandle_t cublas_handle[], cudnnHandle_t cudnn_handle[],
-    int streams_n, int batch_n, int minibatch,
-    convolution_dim &conv_dim, int tokens, int tokens_per_block,
+    int streams_n, int batch_n, int batch, int minibatch,
+    convolution_dim &conv_dim, int tokens, 
     patch_emb_weights pe_w,
     vector<block_weights> blk_w,
     pred_head_weights ph_w,    
     half *gpu_pics, int *gpu_predictions
 ){
     assert(conv_dim.batch == minibatch);
+    // assert(batch % minibatch == 0);
     half * gpu_pics_start = gpu_pics;
     size_t minibatch_elements_n = conv_dim.batch * conv_dim.height * conv_dim.width * conv_dim.channels;
     
-    float total_time = time_cpu(FULL_VIT_WARMUP, FULL_VIT_N, [&]() {  
-        vit_predictions predictions(batch_n * conv_dim.batch * CLASS_N, batch_n * conv_dim.batch);
+    benchmark_time total_time = time_cpu(FULL_VIT_WARMUP, FULL_VIT_N, [&]() {  
+        vit_predictions predictions(batch_n * batch * CLASS_N, batch_n * batch);
         vector<GpuVit> gpu_vit;
         gpu_vit.reserve(streams_n);
         for(int i = 0; i < streams_n; i++){
             gpu_vit.emplace_back(
                 stream[i], cudnn_handle[i], cublas_handle[i],
                 conv_dim, tokens, 
-                CLASS_N, DEPTH, HEADS_N, SCALE, MLP_HIDDEN,
+                CLASS_N, DEPTH, HEADS_N, SCALE,
+                EPS, EPS,
+                MLP_HIDDEN,
                 false, 
                 false, 
                 true, 
                 false
             );
-            gpu_vit[i].tokens_per_block = tokens_per_block; 
 
             // -Independent buffers
             gpu_vit[i].allocate_shared_buffers(); 
@@ -352,9 +373,9 @@ vit_time multi_stream_full_vit(
         }
 
         int vit_instance = 0;
-        for(int mini = 0; mini <  batch_n ; mini++){
+        for(int mini = 0; mini <  batch_n * (batch / minibatch) ; mini++){
             gpu_vit[vit_instance].ph.gpu_x =
-                predictions.predictions_probabilities + (mini * conv_dim.batch * CLASS_N);
+                predictions.predictions_probabilities + (mini * minibatch * CLASS_N);
 
             gpu_vit[vit_instance].load_pics(gpu_pics_start);
             gpu_pics_start += minibatch_elements_n;
@@ -402,14 +423,10 @@ int main(int argc, char** argv){
     int batch_n             = get_arg(argc, argv, "--batch_n", 2);
     int batch               = get_arg(argc, argv, "--batch", 4);
     int minibatch           = get_arg(argc, argv, "--minibatch", 2);
-    /*THESE 3 should be found in isolation in others bench*/
     int transpose_stride    = get_arg(argc, argv, "--transpose_stride", 2);
     int add_stride          = get_arg(argc, argv, "--add_stride", 2);
-    int tokens_per_block    = batch < TOKENS_PER_BLOCK ? 1 : TOKENS_PER_BLOCK;
-    if(kernel == 5)
-        tokens_per_block    = minibatch < TOKENS_PER_BLOCK ? 1 : TOKENS_PER_BLOCK;
-    int elements_per_thread = ELEMENTS_PER_TH;
-    //----
+    bool cpu_comparison     = get_arg(argc, argv, "--cpu", 0);
+
 
     int channels = 3, height = 224, width = 224, Ho = 16, Wo = 16,
         embeddings = EMBEDDINGS_SIZE, tokens = (height / Ho) * (width / Wo);
@@ -432,8 +449,8 @@ int main(int argc, char** argv){
         // << " block_dim            " << block_dim       << "\n"
         << " transpose_stride     " << transpose_stride<< "\n"
         << " add_stride           " << add_stride  << "\n"
-        << " ln_tokens_per_block  " << tokens_per_block << "\n"
-        << " ln elements_per_th   " << elements_per_thread  << "\n"
+        << " ln_tokens_per_block  " << TOKENS_PER_BLOCK << "\n"
+        << " ln elements_per_th   " << ELEMENTS_PER_TH  << "\n"
         << " warmup_iters:        " << WARM_UP << "\n"
         << " timed_iters:         " << N << "\n";
 
@@ -483,11 +500,12 @@ int main(int argc, char** argv){
     PredictionBatch pb_cpu[batch_n];
     vector<PictureBatch> pic; pic.reserve(batch_n);
     float * data_iter = h_input.data();
-    for(int i = 0; i < batch_n; i++){
-        pic.emplace_back(data_iter, input_pic_elements_num , batch, channels, height, width);
-        // vit.forward(pic[i], pb_cpu[i]); // TO UNCOMMENT
-        data_iter += input_pic_elements_num;
-    }
+    if(cpu_comparison)
+        for(int i = 0; i < batch_n; i++){
+            pic.emplace_back(data_iter, input_pic_elements_num , batch, channels, height, width);
+            vit.forward(pic[i], pb_cpu[i]); // TO UNCOMMENT
+            data_iter += input_pic_elements_num;
+        }
 
     patch_emb_weights pe_w;
     vector<block_weights> blk_w;
@@ -498,14 +516,14 @@ int main(int argc, char** argv){
         cout << "|| GpuVit Setup ||" << endl;
         vit_time avg_setup = vit_setup(
             streams[0], cublaslt_handles[0], cudnn_handles[0],
-            conv_dim, tokens, tokens_per_block,
+            conv_dim, tokens,
             pe_w, blk_w, ph_w
         );
 
         avg_setup.print();
         avg_setup.to_JSON(
             1, 1, batch, batch,
-            new int[4]{transpose_stride, add_stride, tokens_per_block, elements_per_thread}
+            new int[4]{transpose_stride, add_stride}
         );
 
     }
@@ -513,31 +531,31 @@ int main(int argc, char** argv){
         cout << "|| GpuVit Forward ||" << endl;
         vit_time avg_forward = vit_forward(
             streams[0], cublaslt_handles[0], cudnn_handles[0],
-            conv_dim, tokens, tokens_per_block,
+            conv_dim, tokens,
             pe_w, blk_w, ph_w,
             gpu_input.data(), gpu_predictions.data()
         );
         avg_forward.print();
         avg_forward.to_JSON(
             1, 1, batch, batch,
-            new int[4]{transpose_stride, add_stride, tokens_per_block, elements_per_thread}
+            new int[4]{transpose_stride, add_stride}
         );
-
-        cout << "Single batch comparison with CPU: " << compare_predictions(pb_cpu[0], gpu_predictions.data()) * 100.0f<< "%" <<endl;
+        if(cpu_comparison)
+            cout << "Single batch comparison with CPU: " << compare_predictions(pb_cpu[0], gpu_predictions.data()) * 100.0f<< "%" <<endl;
     }
     if(kernel == 3){
         cout << "|| GpuVit full multi predictions ||" << endl;
         vit_time avg_total_time = full_vit_multi_prediction(
             streams[0], cublaslt_handles[0], cudnn_handles[0],
             batch_n,
-            conv_dim, tokens, tokens_per_block,
+            conv_dim, tokens,
             pe_w, blk_w, ph_w,
             gpu_input.data(), gpu_predictions.data()
         );
         avg_total_time.print();
         avg_total_time.to_JSON(
             1, batch_n, batch, batch,
-            new int[4]{transpose_stride, add_stride, tokens_per_block, elements_per_thread}
+            new int[4]{transpose_stride, add_stride}
         );
 
         float avg_accuracy = 0.0f;
@@ -546,7 +564,8 @@ int main(int argc, char** argv){
             avg_accuracy += compare_predictions(pb_cpu[i], prediction_iter);
             prediction_iter += batch;
         }
-        cout << "Full comparison with CPU: " << (avg_accuracy / batch_n) * 100 << "%" <<endl;
+        if(cpu_comparison)
+            cout << "Full comparison with CPU: " << (avg_accuracy / batch_n) * 100 << "%" <<endl;
 
     }
     if(kernel == 4){
@@ -554,14 +573,14 @@ int main(int argc, char** argv){
         vit_time avg_total_time = full_vit_single_prediction(
             streams[0], cublaslt_handles[0], cudnn_handles[0],
             batch_n,
-            conv_dim, tokens, tokens_per_block,
+            conv_dim, tokens,
             pe_w, blk_w, ph_w,
             gpu_input.data(), gpu_predictions.data()
         );
         avg_total_time.print();
         avg_total_time.to_JSON(
             1, batch_n, batch, batch,
-            new int[4]{transpose_stride, add_stride, tokens_per_block, elements_per_thread}
+            new int[4]{transpose_stride, add_stride}
         );
 
         float avg_accuracy = 0.0f;
@@ -570,23 +589,29 @@ int main(int argc, char** argv){
             avg_accuracy += compare_predictions(pb_cpu[i], prediction_iter);
             prediction_iter += batch;
         }
-        cout << "Full comparison with CPU: " << (avg_accuracy / batch_n) * 100 << "%" <<endl;
+        if(cpu_comparison)
+            cout << "Full comparison with CPU: " << (avg_accuracy / batch_n) * 100 << "%" <<endl;
     }
     if(kernel == 5){
         cout << "|| GpuVit MultiStream ||" << endl;
         assert(batch % minibatch == 0);
+        if(minibatch < TOKENS_PER_BLOCK || minibatch % TOKENS_PER_BLOCK != 0){
+            cout << "Minibatch size must be multiple of tokens per block (" << TOKENS_PER_BLOCK << ")\n";
+            return 0;
+        }
+        
         conv_dim.batch = minibatch;
         vit_time avg_total_time = multi_stream_full_vit(
             streams, cublaslt_handles, cudnn_handles,
-            streams_n, batch_n, minibatch,
-            conv_dim, tokens, tokens_per_block,
+            streams_n, batch_n, batch, minibatch,
+            conv_dim, tokens,
             pe_w, blk_w, ph_w,
             gpu_input.data(), gpu_predictions.data()
         );
         avg_total_time.print();
         avg_total_time.to_JSON(
             streams_n, batch_n, batch, minibatch,
-            new int[4]{transpose_stride, add_stride, tokens_per_block, elements_per_thread}
+            new int[4]{transpose_stride, add_stride}
         );
 
         float avg_accuracy = 0.0f;
@@ -595,7 +620,8 @@ int main(int argc, char** argv){
             avg_accuracy += compare_predictions(pb_cpu[i], prediction_iter);
             prediction_iter += batch;
         }
-        cout << "Full comparison with CPU: " << (avg_accuracy / batch_n) * 100 << "%" <<endl;
+        if(cpu_comparison)
+            cout << "Full comparison with CPU: " << (avg_accuracy / batch_n) * 100 << "%" <<endl;
     }
     if(kernel == 6){
         cout << "|| GpuVit MultiStream Pinned memory buffer ||" << endl;

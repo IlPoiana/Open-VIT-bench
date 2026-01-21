@@ -67,8 +67,9 @@ class GpuPredictionHead {
         u_int class_num;
 
         u_int stride_val = 2;
-        u_int blocks_num;
-        u_int block_dim;
+        u_int stride_block_dim = 256;
+        u_int ln_blocks_num;
+        u_int ln_block_dim;
         u_int tokens_per_block = 1;
         double epsilon = 1e-4;
 
@@ -138,6 +139,8 @@ class GpuPredictionHead {
         void compute_predictions();
 
         void forward(bool debug = false);
+
+        void forward_vit();
 
     private:
         u_int input_elements_number;

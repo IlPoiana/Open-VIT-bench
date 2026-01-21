@@ -88,8 +88,9 @@ GpuPredictionHead &GpuPredictionHead::operator=(GpuPredictionHead&& ph) noexcept
     embeddings = ph.embeddings;
     class_num = ph.class_num;
     stride_val = ph.stride_val;
-    blocks_num = ph.blocks_num;
-    block_dim = ph.block_dim;
+    stride_block_dim = ph.stride_block_dim;
+    ln_blocks_num = ph.ln_blocks_num;
+    ln_block_dim = ph.ln_block_dim;
     tokens_per_block = ph.tokens_per_block;
     epsilon = ph.epsilon;
 
@@ -122,11 +123,15 @@ GpuPredictionHead::GpuPredictionHead(
     cublas_handle(cublas_handle_),
     cudnn_handle(cudnn_handle_),
     stream(stream_),
-    block_dim(embeddings_)
+    ln_block_dim(embeddings_)
 {
     class_prediction = (int *)malloc(sizeof(int) * batch);
     input_elements_number = batch * tokens * embeddings;
-    
+    // layer norm
+    ln_block_dim = CUB_LAYER_MULTI_BLOCK_DIM;
+    assert(input_elements_number % (ln_block_dim * TOKENS_PER_BLOCK) == 0);
+    ln_blocks_num = (batch * tokens) / TOKENS_PER_BLOCK;
+
     gpu_x = (half *)malloc(sizeof(half) * input_elements_number);
     h_x = (float *)malloc(sizeof(float) * input_elements_number);
     host_arr_initialized = true;
@@ -151,8 +156,8 @@ GpuPredictionHead::GpuPredictionHead():
     tokens    (),
     embeddings(),
     class_num (),
-    blocks_num(),
-    block_dim (),
+    ln_blocks_num(),
+    ln_block_dim (),
     class_prediction(),
     gpu_x(),
     h_x()
@@ -280,13 +285,55 @@ void GpuPredictionHead::compute_predictions(){
     }
 }
 
+void GpuPredictionHead::forward_vit(){
+
+    /*layer norm*/
+    unrolled_multi_elem_cub_ln<<<ln_blocks_num, ln_block_dim, 0, stream>>>(
+        (half*)d_x, (half*)d_x,
+        (half*)d_ln_scale, (half*)d_ln_bias,
+        __double2half(epsilon)
+    );
+
+    /*pool*/
+    half * pool_iterator = (half *)d_t;
+    half * tokens_iterator = (half *)d_x;
+    for(int i = 0; i < batch; i++){
+        cudaMemcpyAsync(pool_iterator, tokens_iterator, sizeof(half) * embeddings, cudaMemcpyDeviceToDevice); //Using default stream
+        pool_iterator += embeddings;
+        tokens_iterator += embeddings * tokens;
+    }
+
+    strided_linear_layer(
+        cublas_handle,stream,
+        batch,  1, class_num,
+        stride_val, stride_block_dim,
+        matmul, algo, d_workspace,
+        d_t, d_head_weights, d_head_bias, d_y,
+        false
+    );
+
+    /*cuDNN softmax*/
+    CUDNN_CHECK(
+        cudnnSoftmaxForward(
+            cudnn_handle,
+            softmax.algo,
+            softmax.mode,
+            &alpha, softmax.x_desc, d_y, 
+            &beta,softmax.x_desc, d_pred
+        )
+    )
+
+    /*Find the max of each elements of the batch*/
+    CUDA_CHECK(cudaMemcpyAsync(gpu_x, d_pred, sizeof(half) * batch * class_num, cudaMemcpyDeviceToHost));
+}
+
 void GpuPredictionHead::forward(bool debug){
     if(debug) tokens_per_block = 1;
 
     /*layer norm*/
-    blocks_num = (input_elements_number / (block_dim * tokens_per_block));
-    assert(input_elements_number % (block_dim * tokens_per_block) == 0);
-    cub_single_layer_norm<<<blocks_num, block_dim, 0, stream>>>(
+    ln_blocks_num = (input_elements_number / (ln_block_dim * tokens_per_block));
+    assert(input_elements_number % (ln_block_dim * tokens_per_block) == 0);
+    cub_single_layer_norm<<<ln_blocks_num, ln_block_dim, 0, stream>>>(
         (half*)d_x, (half*)d_x,
         (half*)d_ln_scale, (half*)d_ln_bias,
         __double2half(epsilon),
@@ -319,7 +366,8 @@ void GpuPredictionHead::forward(bool debug){
     // /*matmul*/ CHECK THE WEIGHTS LOADING
     strided_linear_layer(
         cublas_handle,stream,
-        batch,  1, class_num, stride_val,
+        batch,  1, class_num,
+        stride_val, stride_block_dim,
         matmul, algo, d_workspace,
         d_t, d_head_weights, d_head_bias, d_y,
         false

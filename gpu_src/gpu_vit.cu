@@ -308,6 +308,8 @@ GpuVit::GpuVit(
     vit_size _depth ,
     vit_size _num_heads ,
     vit_float _scale_val ,
+    double _block_epsilon,
+    double _ph_epsilon,
     vit_size mlp_hidden ,
 
     vit_bool init_pe_descriptors,
@@ -332,8 +334,8 @@ GpuVit::GpuVit(
     depth      (_depth),
     num_heads(_num_heads),
     scale_val(_scale_val),
-
-    
+    block_epsilon(_block_epsilon),
+    pred_head_epsilon(_ph_epsilon),    
     pe(
         _stream, _cudnn_handle, _conv_dim,
         allocate_pe_shared_ptrs, 
@@ -476,10 +478,10 @@ void GpuVit::forward(){
     pe.forward();
     
     for(int i = 0; i < depth; i++){
-        blocks[i].forward(false, tokens_per_block);
+        blocks[i].forward_vit();
     }
     
-    ph.forward();
+    ph.forward_vit();
 
 }
 

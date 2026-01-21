@@ -28,14 +28,14 @@ struct ph_time{
     }
 
     void to_JSON(int batch, int params[]){
-        int tokens_per_block = params[0];
         int stride_val       = params[1];
 
         cout << "{\n"
             << "\"batch\":" << batch << ",\n"
             << "\"params\": {\n" 
-                << "\"tokens_per_block\":" << tokens_per_block << ",\n"
-                << "\"stride_val\":" << stride_val << "\n"
+                << "\"tokens_per_block\":" << TOKENS_PER_BLOCK << ",\n"
+                << "\"stride_val\":" << stride_val << ",\n"
+                << "\"elements_per_thread\":" << ELEMENTS_PER_TH << "\n"
             << "},\n"
             << "\"time\": {\n" 
                 << "\"kernel_time\":" << kernel_time << ",\n"
@@ -53,7 +53,7 @@ ph_time full_prediction_head(
     void *d_x, void *d_t, void *d_y, void *d_pred, void *d_workspace,
     void *d_ln_scale, void *d_ln_bias, void *d_lin_w, void *d_lin_bias,    
     half *gpu_output, int * predictions, //For CPU comparison
-    int tokens_per_block, int stride_val
+    int stride_val, int block_dim
 ){
     size_t pred_n = batch * class_num;
 
@@ -66,10 +66,10 @@ ph_time full_prediction_head(
     gpu_ph.set_shared_buffers(d_x, d_t, d_y, d_pred, d_workspace);
     gpu_ph.set_shared_weights(d_ln_scale, d_ln_bias, d_lin_w, d_lin_bias);
     
-    gpu_ph.tokens_per_block = tokens_per_block;
     gpu_ph.stride_val = stride_val;
+    gpu_ph.stride_block_dim = block_dim;
 
-    gpu_ph.forward(false);
+    gpu_ph.forward_vit();
     gpu_ph.compute_predictions();
     CUDA_CHECK(cudaMemcpy(gpu_output, gpu_ph.d_pred, sizeof(half) * pred_n, cudaMemcpyDeviceToHost));
     for(int i = 0; i < batch; i++){
@@ -77,7 +77,7 @@ ph_time full_prediction_head(
     }
 
     float avg_ms = time_kernel(WARM_UP, N, stream,[&]() {
-        gpu_ph.forward(false);
+        gpu_ph.forward_vit();
     });
 
 
@@ -91,7 +91,7 @@ void single_run(cudaStream_t &stream, cudnnHandle_t &cudnn_handle, cublasLtHandl
     void *d_x, void *d_t, void *d_y, void *d_pred, void *d_workspace,
     void *d_ln_scale, void *d_ln_bias, void *d_lin_w, void *d_lin_bias,    
     half *gpu_output, int * predictions, //For CPU comparison
-    int tokens_per_block, int stride_val
+    int stride_val, int block_dim
 ){
     size_t pred_n = batch * class_num;
 
@@ -104,10 +104,10 @@ void single_run(cudaStream_t &stream, cudnnHandle_t &cudnn_handle, cublasLtHandl
     gpu_ph.set_shared_buffers(d_x, d_t, d_y, d_pred, d_workspace);
     gpu_ph.set_shared_weights(d_ln_scale, d_ln_bias, d_lin_w, d_lin_bias);
     
-    gpu_ph.tokens_per_block = tokens_per_block;
     gpu_ph.stride_val = stride_val;
+    gpu_ph.stride_block_dim = block_dim;
 
-    gpu_ph.forward(false);
+    gpu_ph.forward_vit();
     gpu_ph.compute_predictions();
     CUDA_CHECK(cudaMemcpy(gpu_output, gpu_ph.d_pred, sizeof(half) * pred_n, cudaMemcpyDeviceToHost));
     for(int i = 0; i < batch; i++){
@@ -123,7 +123,7 @@ ph_time all_times(
     void *d_x, void *d_t, void *d_y, void *d_pred, void *d_workspace,
     void *d_ln_scale, void *d_ln_bias, void *d_lin_w, void *d_lin_bias,    
     half *gpu_output, int * predictions, //For CPU comparison
-    int tokens_per_block, int stride_val
+    int stride_val, int block_dim
 ){
     GpuPredictionHead gpu_ph(
         batch, tokens, embeddings, class_num,
@@ -139,7 +139,7 @@ ph_time all_times(
         d_x, d_t, d_y, d_pred, d_workspace,
         d_ln_scale, d_ln_bias, d_lin_w, d_lin_bias,
         gpu_output, predictions,
-        tokens_per_block, stride_val
+        stride_val, block_dim
     ).kernel_time;
 
     /*pool*/
@@ -155,7 +155,8 @@ ph_time all_times(
     float avg_linear_time = time_kernel(WARM_UP, N, stream,[&]() {
         strided_linear_layer(
             cublas_handle,stream,
-            batch,  1, class_num, stride_val,
+            batch,  1, class_num,
+            stride_val, block_dim,
             gpu_ph.matmul, gpu_ph.algo, d_workspace,
             d_t, d_lin_w, d_lin_bias, d_y,
             false
@@ -176,9 +177,10 @@ ph_time all_times(
         )
     });
 
-    float avg_prediction_time = time_cpu(WARM_UP, N, [&]() {
+    benchmark_time prediction_time = time_cpu(WARM_UP, N, [&]() {
         gpu_ph.compute_predictions();
     });
+    float avg_prediction_time = prediction_time.avg_time;
 
     
     gpu_ph.destroy_descriptors();
@@ -190,8 +192,9 @@ int main(int argc, char** argv)
 {
     int kernel_id           = get_arg(argc, argv, "--kernel", 1);
     int batch               = get_arg(argc, argv, "--batch", 32);
-    int tokens_per_block    = get_arg(argc, argv, "--tokens_per_block", 32);
     int stride_val          = get_arg(argc, argv, "--stride", 2);
+    int block_dim           = get_arg(argc, argv, "--block_dim", 256);
+    bool cpu_comparison     = get_arg(argc, argv, "--cpu", 0);
     int tokens              = TOKENS_NUM_VIT;
     int embeddings          = EMBEDDINGS_SIZE;
     int num_classes         = CLASS_N;
@@ -201,8 +204,9 @@ int main(int argc, char** argv)
               << " tokens:              " << tokens          << "\n"
               << " embeddings:          " << embeddings      << "\n"
               << " num_classes:         " << num_classes << "   \n"
-              << " tokens_per_block:    " << tokens_per_block << "\n"
               << " residual stride:     " << stride_val << "\n"
+              << " tokens_per_block:    " << TOKENS_PER_BLOCK << "\n"
+              << " elements_per_thread: " << ELEMENTS_PER_TH << "\n"
               << " warmup_iters:        " << WARM_UP << "\n"
               << " timed_iters:         " << N << "\n";
 
@@ -295,16 +299,15 @@ int main(int argc, char** argv)
     head.move_A(head_w); head.move_b(head_bias);
     
     // - CPU forward (equivalent to my GPU class forward)
-    ln(cpu_x);
-    global_pool_nlc(cpu_x, head_in, pool_token, 1, true); //num_prefix_tokens = 1 (cls token)
-    head(head_in, head_out);
     PredictionBatch pb(head_out);
-    
     Tensor cpu_y(batch, 1, num_classes);
     vector<int> gpu_predictions(batch);
-
-    pb.get_prediction_probability_tensor(cpu_y);
-
+    if(cpu_comparison){
+        ln(cpu_x);
+        global_pool_nlc(cpu_x, head_in, pool_token, 1, true); //num_prefix_tokens = 1 (cls token)
+        head(head_in, head_out);
+        pb.get_prediction_probability_tensor(cpu_y);
+    }
     if (kernel_id == 0 || kernel_id == 1){
         cout << "|| GPU Prediction Head ||" << endl;
         ph_time res_time = full_prediction_head(
@@ -313,12 +316,14 @@ int main(int argc, char** argv)
             d_x, d_t, d_y, d_pred, d_workspace,
             d_ln_scale, d_ln_bias, d_lin_w, d_lin_bias,
             gpu_output.data(), gpu_predictions.data(),
-            tokens_per_block, stride_val
+            stride_val, block_dim
         );
-        cout << "First iteration comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+        if(cpu_comparison){
+            cout << "First iteration comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+            cout << "Prediction comparison with CPU: " << compare_predictions(pb, gpu_predictions.data()) * 100.0f<< "%" <<endl;        
+        }
         res_time.print();
-        cout << "Prediction comparison with CPU: " << compare_predictions(pb, gpu_predictions.data()) * 100.0f<< "%" <<endl;        
-        res_time.to_JSON(batch, new int[2]{tokens_per_block, stride_val});
+        res_time.to_JSON(batch, new int[2]{stride_val});
     }
     if (kernel_id == 0 || kernel_id == 2){
         cout << "|| Single Run ||" << endl;
@@ -331,10 +336,12 @@ int main(int argc, char** argv)
             d_x, d_t, d_y, d_pred, d_workspace,
             d_ln_scale, d_ln_bias, d_lin_w, d_lin_bias,
             gpu_output.data(), gpu_predictions.data(),
-            tokens_per_block, stride_val
+            stride_val, block_dim
         );
-        cout << "Single run comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
-        cout << "Prediction comparison with CPU: " << compare_predictions(pb, gpu_predictions.data()) * 100.0f<< "%" <<endl;
+        if(cpu_comparison){
+            cout << "Single run comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+            cout << "Prediction comparison with CPU: " << compare_predictions(pb, gpu_predictions.data()) * 100.0f<< "%" <<endl;
+        }
     }
     if (kernel_id == 0 || kernel_id == 3){
         cout << "|| All times ||" << endl;
@@ -344,10 +351,10 @@ int main(int argc, char** argv)
             d_x, d_t, d_y, d_pred, d_workspace,
             d_ln_scale, d_ln_bias, d_lin_w, d_lin_bias,
             gpu_output.data(), gpu_predictions.data(),
-            tokens_per_block, stride_val
+            stride_val, block_dim
         );
         res_time.print();
-        res_time.to_JSON(batch, new int[2]{tokens_per_block, stride_val});
+        res_time.to_JSON(batch, new int[2]{stride_val});
     }
 
     // - Cleanup

@@ -1,11 +1,10 @@
-
 #include "../gpu_include/bench_utils.h"
 
-void kernel_time::print() {
-    cout << "   Kernel time (ms): " << time << endl;
+void benchmark_time::print() {
+    cout << "   Kernel time  : " << avg_time << " +"<< variance<< " ms\n";
 }
 
-void kernel_time::to_JSON(int batch, int params[]){
+void benchmark_time::to_JSON(int batch, int params[]){
     int elements_per_th = params[0];
     int tokens_per_block = params[1];
 
@@ -16,7 +15,8 @@ void kernel_time::to_JSON(int batch, int params[]){
             << "\"elements_per_th\":" << elements_per_th << "\n"
         << "},\n"
         << "\"time\": {\n" 
-            << "\"time\":" << time << "\n"
+            << "\"time\":"      << avg_time << ",\n"
+            << "\"variance\":"  << variance << "\n"
         << "}\n"
         << "}\n";
 }
@@ -71,7 +71,53 @@ float time_kernel(
     return total_ms / iters;
 }
 
-float time_cpu(
+benchmark_time time_kernel_variance(
+    int warmup,
+    int iters,
+    cudaStream_t stream,
+    std::function<void()> launch
+){
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    // Warm-up
+    for (int i = 0; i < warmup; ++i)
+        launch();
+    cudaStreamSynchronize(stream);
+
+    float total_ms = 0.0f;
+    std::vector<float> times(iters); // Store individual execution times
+
+    for (int i = 0; i < iters; ++i) {
+        cudaEventRecord(start, stream);
+        launch();
+        cudaEventRecord(stop, stream);
+        cudaEventSynchronize(stop);
+
+        float ms = 0.0f;
+        cudaEventElapsedTime(&ms, start, stop);
+        times[i] = ms; // Save the time for variance calculation
+        total_ms += ms;
+    }
+
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+
+    float average_time = total_ms / iters;
+
+    // Compute variance
+    float variance = 0.0f;
+    for (float time : times) {
+        variance += (time - average_time) * (time - average_time);
+    }
+    variance /= iters;
+
+    return benchmark_time(average_time, variance);
+}
+
+
+benchmark_time time_cpu(
     int warmup,
     int iters,
     std::function<void()> func
@@ -80,14 +126,38 @@ float time_cpu(
     for (int i = 0; i < warmup; ++i)
         func();
 
+    std::vector<float> times(iters);
     auto start = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < iters; ++i)
+    
+    for (int i = 0; i < iters; ++i) {
+        auto iter_start = std::chrono::high_resolution_clock::now();
         func();
+        auto iter_end = std::chrono::high_resolution_clock::now();
+        
+        std::chrono::duration<float, std::milli> duration = iter_end - iter_start;
+        times[i] = duration.count();
+    }
+    
     auto end = std::chrono::high_resolution_clock::now();
+    
+    // Calculate average
+    float sum = 0.0f;
+    for (float time : times) {
+        sum += time;
+    }
+    float average = sum / iters;
 
-    std::chrono::duration<float, std::milli> duration = end - start;
-    return duration.count() / iters;
+    // Calculate variance
+    float variance_sum = 0.0f;
+    for (float time : times) {
+        variance_sum += (time - average) * (time - average);
+    }
+    float variance = variance_sum / iters;
+
+    return benchmark_time(average, variance);
 }
+
+
 
 
 // Returns the MRE of the cpu `y` Tensor and `gpu_y`. Attention! There is a tolerance instroduced to avoid division by zero

@@ -25,11 +25,13 @@ struct mlp_time{
     void to_JSON(int batch, int params[]){
         int mlp_type      = params[0];
         int stride_val    = params[1];
+        int block_dim     = params[2];
 
         cout << "{\n"
             << "\"batch\":" << batch << ",\n"
             << "\"params\": {\n" 
                 << "\"stride_val\":" << stride_val << ",\n"
+                << "\"block_dim\":" << block_dim << ",\n"
                 << "\"mlp_type\":" << mlp_type << "\n"
             << "},\n"
             << "\"time\": {\n" 
@@ -46,7 +48,7 @@ mlp_time unfused_mlp(
     u_int batch, u_int tokens, u_int channels,u_int k_channels,
     void * d_workspace,
     void * d_x, void * d_fc1, void * d_h,void * d_b1, void * d_fc2, void * d_b2, 
-    void * d_y, int stride_val
+    void * d_y, int stride_val, int block_dim
 ){
     //Create the descriptors
     mlp_dimensions dim(batch, tokens, channels, k_channels, channels);
@@ -66,7 +68,7 @@ mlp_time unfused_mlp(
             batch,tokens,k_channels,channels,
             matmul, algo, d_workspace,
             d_x, d_fc1, d_h, d_b1, d_fc2, d_b2, d_y, 
-            stride_val
+            stride_val, block_dim
         );
     });
 
@@ -154,7 +156,7 @@ void single_run(
     void * d_workspace,
     void * d_x, void * d_fc1, void * d_h,void * d_b1, void * d_fc2, void * d_b2,
     half * gpu_b1 , half * gpu_b2, 
-    void * d_y, int stride_val, bool kernel_type
+    void * d_y, int stride_val, int block_dim, bool kernel_type
 ){
     if(kernel_type){
         size_t input_elements_n = batch * tokens * channels;
@@ -236,7 +238,7 @@ void single_run(
             batch,tokens,k_channels,channels,
             matmul, algo, d_workspace,
             d_x, d_fc1, d_h, d_b1, d_fc2, d_b2, d_y, 
-            stride_val
+            stride_val, block_dim
         );
     } 
     
@@ -250,6 +252,9 @@ int main(int argc, char** argv)
     int embeddings          = get_arg(argc, argv, "--embeddings", 768);
     int hidden_channels     = get_arg(argc, argv, "--hidden_channels", 3072);
     int stride_val          = get_arg(argc, argv, "--stride", 2);
+    int block_dim           = get_arg(argc, argv, "--block_dim", 256);
+    bool cpu_comparison     = get_arg(argc, argv, "--cpu", 0);
+
 
     cout << "LayerNorm Benchmark\n"
               << " batch_size:          " << batch << "\n"
@@ -257,6 +262,7 @@ int main(int argc, char** argv)
               << " embeddings:          " << embeddings      << "\n"
               << " hidden_channels:     " << hidden_channels << "\n"
               << " stride:              " << stride_val << "\n"
+              << " block_dim:           " << block_dim << "\n"
               << " warmup_iters:        " << WARM_UP << "\n"
               << " timed_iters:         " << N << "\n";
 
@@ -352,7 +358,8 @@ int main(int argc, char** argv)
 
     Tensor cpu_x(h_input.data(), elements_n, batch, tokens, embeddings);
     Tensor cpu_y(batch, tokens, embeddings);
-    cpu_mlp.forward(cpu_x, cpu_y);
+    if(cpu_comparison)
+        cpu_mlp.forward(cpu_x, cpu_y);
 
     if (kernel_id == 0 || kernel_id == 1){
         cout << "|| Unfused kernel ||" << endl;
@@ -362,12 +369,14 @@ int main(int argc, char** argv)
             batch, tokens, embeddings, hidden_channels,
             d_workspace,
             d_x, d_fc1, d_h, d_b1, d_fc2, d_b2, d_y,
-            stride_val
+            stride_val, block_dim
         );
-        CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_y, total_bytes, cudaMemcpyDeviceToHost));
-        cout << "Last iteration comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+        if(cpu_comparison){
+            CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_y, total_bytes, cudaMemcpyDeviceToHost));
+            cout << "Last iteration comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+        }
         res_time.print();
-        res_time.to_JSON(batch, new int[2]{0, stride_val});
+        res_time.to_JSON(batch, new int[3]{0, stride_val, block_dim});
     }
     if (kernel_id == 0 || kernel_id == 2){
         cout << "|| Fused kernel ||" << endl;
@@ -378,10 +387,12 @@ int main(int argc, char** argv)
             d_workspace,
             d_x, d_fc1, d_h, gpu_b1.data(), d_fc2, gpu_b2.data(), d_y
         );
-        CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_y, total_bytes, cudaMemcpyDeviceToHost));
-        cout << "Last iteration comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+        if(cpu_comparison){
+            CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_y, total_bytes, cudaMemcpyDeviceToHost));
+            cout << "Last iteration comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+        }
         res_time.print();
-        res_time.to_JSON(batch, new int[2]{1, stride_val});
+        res_time.to_JSON(batch, new int[3]{1, 0, 0});
     }
     if(kernel_id == 3){
         cout << " || Single Run unfused ||" << endl;
@@ -393,11 +404,13 @@ int main(int argc, char** argv)
             d_x, d_fc1, d_h, d_b1, d_fc2, d_b2,
             gpu_b1.data(), gpu_b2.data(),
             d_y,
-            stride_val, false
+            stride_val, block_dim, 
+            false
         );
-        CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_y, total_bytes, cudaMemcpyDeviceToHost));
-        cout << "Single run comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
-        
+        if(cpu_comparison){
+            CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_y, total_bytes, cudaMemcpyDeviceToHost));
+            cout << "Single run comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+        }        
     }
     if(kernel_id == 4){
         cout << " || Single Run fused ||" << endl;
@@ -409,10 +422,13 @@ int main(int argc, char** argv)
             d_x, d_fc1, d_h, d_b1, d_fc2, d_b2,
             gpu_b1.data(), gpu_b2.data(),
             d_y,
-            stride_val, true
+            stride_val, block_dim, 
+            true
         );
-        CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_y, total_bytes, cudaMemcpyDeviceToHost));
-        cout << "Single run comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+        if(cpu_comparison){
+            CUDA_CHECK(cudaMemcpy(gpu_output.data(), d_y, total_bytes, cudaMemcpyDeviceToHost));
+            cout << "Single run comparison with CPU: " << compare_results(cpu_y, gpu_output.data()) * 100.0f<< "%" <<endl;
+        }
     }
 
     // - Cleanup
