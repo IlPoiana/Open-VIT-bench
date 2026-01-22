@@ -97,7 +97,6 @@ __device__ void dev_block_layer_norm(
     __shared__ half mean;
     __shared__ half variance;
     
-    // /*OG*/__shared__ half x_sh[SH_MEM_DIM]; // n_elems < block size in this case
     half x_sh[2];
     __shared__ half x_buff[SH_MEM_DIM]; // n_elems < block size in this case
     half c = __uint2half_rn(C);
@@ -105,15 +104,10 @@ __device__ void dev_block_layer_norm(
 
     if(idx < stride){
         // load 2 elements per thread, to increase threads occupancy!
-        //OG
-        // x_sh[idx] = x_data[global_idx];
-        // x_buff[idx] = x_sh[idx];
-        //----
         x_sh[0] = x_data[global_idx];
         x_buff[idx] = x_sh[0];
 
         if((C & 1) || (idx < C - 1)){ // load it if the array is even or you aren't the last thread
-            /*CHANGED HERE*/
             x_sh[1] = x_data[global_idx + stride];
             x_buff[idx + stride] = x_sh[1];
         }
@@ -121,14 +115,12 @@ __device__ void dev_block_layer_norm(
     __syncthreads();
     type_dev_block_reduction<half>(x_buff, C, idx); 
     if(idx < stride){
-        // x_mean[0] will have the value
         // mean --> reduction + scalar division
         
         if(idx == 0)
             mean = x_buff[0]/ c;
 
         // reusing the buffer in sh mem
-        /*CHANGED HERE*/
         x_buff[idx] = x_sh[0]; 
 
         if((C & 1) || (idx < C - 1)){ 
@@ -159,7 +151,6 @@ __device__ void dev_block_layer_norm(
         
     // Normalize --> per elem ops
     if(idx < stride){
-        /*CHANGED HERE*/
         out[global_idx] = (((x_sh[0] - mean) * hrsqrt( variance + epsilon)) * scale[idx]) + bias[idx] ;        
 
         if((C & 1) || (idx < C - 1)){ 

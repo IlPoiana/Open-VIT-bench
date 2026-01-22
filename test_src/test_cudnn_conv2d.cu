@@ -150,85 +150,7 @@ void cudnn_conv2d_test(half * h_x, half * h_w, half * h_y, convolution_dim dim){
 }
 
 
-void cpu_gpu_comparison(){
-    u_int batch = 2, height = 4 ,width = 4 ,channels = 3 ,embeddings = 5;
-    int Ho = 2, Wo = 2; //patch size 2x2 => 4 tokens
-    convolution_dim dim(
-        batch,
-        channels,
-        height,width,
-        embeddings,
-        Ho,Wo
-    );
-    u_int output_elements_number = batch * embeddings * dim.y_height * dim.y_width;
-    vector<float> x_f = {
-        0,0,0,0, 1,1,1,1, 1,1,1,1, 0,0,0,0,
-        0,0,0,0, 1,1,1,1, 1,1,1,1, 0,0,0,0,
-        0,0,0,0, 1,1,1,1, 1,1,1,1, 0,0,0,0,
-
-        0,0,0,0, 1,1,1,1, 1,1,1,1, 0,0,0,0,
-        0,0,0,0, 1,1,1,1, 1,1,1,1, 0,0,0,0,
-        0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
-    };
-
-    vector<float> w_f = {
-        0, 1, 
-        0, 1,
-
-        1, 0,
-        0, 1,
-
-        1, 0,
-        1, 0,
-
-        0, 0, 0, 0, 1,0,0,1, 0,0,0,0,
-        0, 0, 0, 0, 1,0,0,1, 0,0,0,0,
-        0, 0, 0, 0, 1,0,0,1, 0,0,0,0,
-        0, 0, 0, 0, 1,0,0,1, 0,0,0,0,
-    };
-
-    float * y_f = (float *)malloc(sizeof(float) * output_elements_number);
-
-    // input is [B,H,W,C] OR [B,C,H,W]
-    h_tensor h_x(x_f.data(),batch,channels,height, width);
-
-    // mask is [EMB,C,Ho,Wo]
-    h_tensor h_w(w_f.data(),embeddings , channels , Ho , Wo);
-
-    // output is [B,EMB,Y_H,Y_W] with T = (H / Ho) * (W / Wo) = Y_H * Y_W
-    vector<half> h_y(output_elements_number);
-
-    // call the gpu method
-    cudnn_conv2d_test(h_x.data, h_w.data, h_y.data(), dim);
-    
-    f16_to_f32(h_y.data(), y_f, output_elements_number);
-    Tensor y(y_f, output_elements_number, batch, dim.y_height * dim.y_width,embeddings); 
-    
-    // -- COMPARISON --
-    // CPU reference
-    PictureBatch x(x_f.data(), batch * channels * height * width,batch, channels, height, width);
-    PictureBatch w(w_f.data(), embeddings * channels * Ho * Wo, embeddings, channels, Ho, Wo);
-    x.print();
-    w.print();
-    
-    PictureBatch y_pic(batch, embeddings, dim.y_height, dim.y_width);
-    Conv2d cpu_layer(channels,embeddings,Ho, Wo, Ho, Wo, false);
-    cpu_layer.move_kernel(w);
-    cpu_layer.forward(x,y_pic);
-    Tensor cpu_y(batch, dim.y_height * dim.y_width, embeddings);
-    y_pic.flatten_to_tensor(cpu_y);
-
-    cout << "CPU" << endl; y_pic.print();
-    cout << "CPU flatten" << endl; cpu_y.print();
-    cout << "GPU flatten" << endl; y.print();
-    cout << "first ten elements: ";
-    for(int i = 0; i < 10; i++)
-        cout << y_f[i] << " ";
-    cout << endl;
-    
-}
-
-void gpu_comparison(bool bias, bool debug = false){
+void cpu_gpu_comparison(bool bias, bool debug = false){
     // 0. Dimensions definitions
     u_int batch, height ,width ,channels ,embeddings;
     int Ho, Wo;
@@ -274,32 +196,28 @@ void gpu_comparison(bool bias, bool debug = false){
     CUDA_CHECK(cudaMalloc(&d_w, sizeof(float) * filter_elements_number));
     CUDA_CHECK(cudaMalloc(&d_b, sizeof(float) * embeddings));
     CUDA_CHECK(cudaMalloc(&d_y, sizeof(half) * output_elements_number));
-    u_long seed = std::chrono::high_resolution_clock::now()
-        .time_since_epoch()
-        .count();
-    u_int block_dim = 256, blocks_n = (input_elements_number / block_dim) + 1;
-    generate_reference<<<blocks_n, block_dim>>>((float *)d_x,input_elements_number,1.0,seed);
-    blocks_n = (filter_elements_number / block_dim) + 1;
-    generate_reference<<<blocks_n, block_dim>>>((float *)d_w,filter_elements_number,1.0,seed);
-    blocks_n = (embeddings / block_dim) + 1;
-    generate_reference<<<blocks_n, block_dim>>>((float *)d_b,embeddings,1.0,seed);
+    
+    random_device rd;          
+    mt19937 gen(rd());         
+    uniform_real_distribution<float> dist(-0.1f, 0.1f);
 
+    size_t loop_range = max(input_elements_number, filter_elements_number);
+    for(size_t i = 0; i < loop_range; i++){
+        if(i < embeddings){
+            h_b[i] = dist(gen);
+        }
+        if(i < input_elements_number){
+            h_x[i] = dist(gen);
+        }
+        if(i < filter_elements_number){
+            h_w[i] = dist(gen);
+        }
+    }
 
-    CUDA_CHECK(cudaMemcpy(h_x, d_x, sizeof(float) * input_elements_number, cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(h_w, d_w, sizeof(float) * filter_elements_number, cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(h_b, d_b, sizeof(float) * embeddings, cudaMemcpyDeviceToHost));
+    f32_to_f16(h_x, x_half, input_elements_number);
+    f32_to_f16(h_w, w_half, filter_elements_number);           
+    f32_to_f16(h_b, b_half, embeddings); 
 
-    /*Convert to half*/
-    cudaFree(d_x); cudaFree(d_w); cudaFree(d_b);
-    CUDA_CHECK(cudaMalloc(&d_x, sizeof(half) * input_elements_number));
-    CUDA_CHECK(cudaMalloc(&d_w, sizeof(half) * filter_elements_number));
-    CUDA_CHECK(cudaMalloc(&d_b, sizeof(half) * embeddings));
-    f32_to_f16(h_x,x_half, input_elements_number);
-    f32_to_f16(h_w,w_half, filter_elements_number);
-    f32_to_f16(h_b,b_half, embeddings);
-    CUDA_CHECK(cudaMemcpy(d_x,x_half, sizeof(half) * input_elements_number, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_w,w_half, sizeof(half) * filter_elements_number, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_b,b_half, sizeof(half) * embeddings, cudaMemcpyHostToDevice));
 
     // 2. CPU reference
     PictureBatch x(h_x, input_elements_number, batch, channels, height, width);
@@ -322,7 +240,8 @@ void gpu_comparison(bool bias, bool debug = false){
     if(debug) y_pic.print();
     y_pic.flatten_to_tensor(y);
     if(debug) y.print();
-    // 3. GPU Strided   
+
+    // 3. GPU    
     /*Initialize the descriptors*/
     cudnnHandle_t handle;
     CUDNN_CHECK(cudnnCreate(&handle));
@@ -349,10 +268,14 @@ void gpu_comparison(bool bias, bool debug = false){
         PictureBatch gpu_y(h_y, output_elements_number, batch, embeddings, dim.y_height , dim.y_width);
         cout << "Pic gpu y: " << endl; gpu_y.print();
     }
+
     /*Transpose*/
     half * d_out; CUDA_CHECK(cudaMalloc(&d_out, sizeof(half) * output_elements_number));
-    block_dim = 256; blocks_n = (output_elements_number / (256 * 4)) + 1;/* We suppose 4 iterations per thread */
-    transpose_strided_tensor3d<<<blocks_n, block_dim>>>((half*)d_y,d_out,dim.batch,dim.embeddings,dim.y_height * dim.y_width);
+    int block_dim = 256; int blocks_n = (output_elements_number / (256 * 4)) + 1;/* We suppose 4 iterations per thread */
+    transpose_strided_tensor3d<<<blocks_n, block_dim>>>(
+        (half*)d_y, d_out,
+        dim.batch, dim.embeddings, dim.y_height * dim.y_width
+    );
     
     CUDA_CHECK(cudaMemcpy(y_half, d_out, sizeof(half) * output_elements_number, cudaMemcpyDeviceToHost));
     if(debug){
@@ -361,20 +284,25 @@ void gpu_comparison(bool bias, bool debug = false){
         cout << "gpu_y: " << endl; gpu_y.print();
     }
     cout << "CPU GPU comparison result: " << compare_results(y, y_half) << endl;
+
+    // -Cleanup
+    desc.destroy_descriptors();
     
-    //Tiling (multi stream)
+    CUDA_CHECK(cudaFree(d_x)); 
+    CUDA_CHECK(cudaFree(d_w)); 
+    CUDA_CHECK(cudaFree(d_b)); 
+    CUDA_CHECK(cudaFree(d_y)); 
+    CUDA_CHECK(cudaFree(d_out));
+    CUDA_CHECK(cudaFree(desc.d_workspace));
+    CUDNN_CHECK(cudnnDestroy(handle));
+    free(h_x); free(h_w); free(h_b); free(h_y);
+    free(x_half); free(w_half); free(b_half); free(y_half);
 }
 
 
 int main() {
-    test_type test = GPU_COMPARISON;
+    bool bias = true, debug = false;
+    cpu_gpu_comparison(bias, debug);
     
-    if(test == CPU_COMPARISON){
-        cpu_gpu_comparison();
-    }
-    else{
-        gpu_comparison(true, false);
-    }
-
     return 0;
 }

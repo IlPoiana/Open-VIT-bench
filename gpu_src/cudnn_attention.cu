@@ -227,11 +227,6 @@ void load_attn_weights(
         CUDNN_CHECK(cudnnGetTensorNdDescriptor(wDesc,4,&dtype, &nbDims, dimA,strideA));
         assert(nbDims == 3);
 
-        //TO REMOVE
-        // cout << "[" << dimA[0]<< ", " << dimA[1] << ", " << dimA[2] << "]" << endl;
-        // cout << "[" << strideA[0]<< ", " << strideA[1] << ", " << strideA[2] << "]" << endl;
-        //----
-
         // Copy to the returned device address 
         CUDA_CHECK(cudaMemcpyAsync(wAddr, host_data, device_size*sizeof(half), cudaMemcpyHostToDevice, stream));
 
@@ -259,21 +254,6 @@ void attention_device(
     attn_cuDNN_descriptors &descriptors,
     bool residuals, void * d_residuals
 ){
-    // cout << "weightBytes: " << descriptors.weightBytes << endl;
-    // cout << "descriptors.loWin " << endl;
-    // for(int i = 0; i < descriptors.loWin.size(); i++) cout << " " << descriptors.loWin.data()[i];
-    // cout << "\ndescriptors.hiWin " << endl;
-    // for(int i = 0; i < descriptors.hiWin.size(); i++) cout << " " << descriptors.hiWin.data()[i];
-    /*TO REMOVE*/
-    // cout << "\nqDesc" << endl; printSeqDataDescriptor(descriptors.qDesc);
-    // cout << "kDesc" << endl; printSeqDataDescriptor(descriptors.kDesc);
-    // cout << "vDesc" << endl; printSeqDataDescriptor(descriptors.vDesc);
-    // cout << "oDesc" << endl; printSeqDataDescriptor(descriptors.oDesc);
-    // cout << " dWeights=" << descriptors.dWeights
-    //  << " weightBytes=" << descriptors.weightBytes
-    //  << " dWork=" << descriptors.dWork
-    //  << " workBytes=" << descriptors.workBytes << endl;
-    //------
 
     CUDNN_CHECK(cudnnMultiHeadAttnForward(
         handle, descriptors.attn,
@@ -511,7 +491,6 @@ void cudnn_attention(
     const int beam_dim = x_host.H;   // 1
     const int emb_dim = x_host.W;    // 9
     const int input_size = x_host.C * x_host.B * x_host.W * x_host.H;
-    // const double scale = NUM_HEADS == 1 ? 1.0 : pow( x_host.W / NUM_HEADS, -0.5);
     const double scale = pow( x_host.W / NUM_HEADS, -0.5); // seems right?
 
     assert(qb_data.size() > 0);
@@ -527,8 +506,6 @@ void cudnn_attention(
     cout<< "first elem: "<< __half2float(x_host.data[0]) << endl;
     const int qkv_projSize = x_host.W / NUM_HEADS; //should be the size of projection (so MHA like 3)
     const int o_projSize = qkv_projSize * NUM_HEADS;
-    // const int qk_projSize = 9;
-    // const int ov_projSize = 9;
 
     // 0) Handle and tensor descriptors creation
     cudnnHandle_t handle;
@@ -536,7 +513,6 @@ void cudnn_attention(
     
     
     //1) Create the attnDropout descriptors (not used)
-    // --- Dropout descriptors (set to 0.0) required by Attn descriptor
     cudnnDropoutDescriptor_t attnDrop = nullptr, postDrop = nullptr;
     CUDNN_CHECK(cudnnCreateDropoutDescriptor(&attnDrop));
     CUDNN_CHECK(cudnnCreateDropoutDescriptor(&postDrop));
@@ -690,4 +666,6 @@ void cudnn_attention(
     
     CUDA_CHECK(cudaDeviceSynchronize());
     CUDA_CHECK(cudaMemcpy(host_out, dO, input_size * sizeof(half), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(dWeights));
+    CUDA_CHECK(cudaFree(dWork));
 }

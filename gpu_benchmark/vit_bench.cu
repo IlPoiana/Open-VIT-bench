@@ -54,10 +54,10 @@ struct vit_predictions {
 };
 
 struct vit_time{
-    float class_setup_time;   //GPU
-    float pics_load_time;       //GPU
-    float forward_time;         //GPU
-    benchmark_time total_time;           //CPU
+    benchmark_time class_setup_time;   //GPU
+    benchmark_time pics_load_time;     //GPU
+    benchmark_time forward_time;       //GPU
+    benchmark_time total_time;         //CPU
 
     vit_time(
         float class_setup_time_ = 0.0f,
@@ -65,7 +65,31 @@ struct vit_time{
         float forward_time_ = 0.0f,
         float total_time_ = 0.0f
     ):
+        class_setup_time(class_setup_time_, 0.0f),
+        pics_load_time(pics_load_time_, 0.0f),
+        forward_time(forward_time_, 0.0f),
+        total_time(total_time_, 0.0f)
+    {}
+
+    vit_time(
+        benchmark_time class_setup_time_,
+        float pics_load_time_,
+        float forward_time_ ,
+        float total_time_
+    ):
         class_setup_time(class_setup_time_),
+        pics_load_time(pics_load_time_, 0.0f),
+        forward_time(forward_time_, 0.0f),
+        total_time(total_time_, 0.0f)
+    {}
+
+    vit_time(
+        float class_setup_time_,
+        benchmark_time pics_load_time_,
+        benchmark_time forward_time_ ,
+        float total_time_
+    ):
+        class_setup_time(class_setup_time_, 0.0f),
         pics_load_time(pics_load_time_),
         forward_time(forward_time_),
         total_time(total_time_, 0.0f)
@@ -77,16 +101,16 @@ struct vit_time{
         float forward_time_ ,
         benchmark_time total_time_
     ):
-        class_setup_time(class_setup_time_),
-        pics_load_time(pics_load_time_),
-        forward_time(forward_time_),
+        class_setup_time(class_setup_time_, 0.0f),
+        pics_load_time(pics_load_time_, 0.0f),
+        forward_time(forward_time_, 0.0f),
         total_time(total_time_)
     {}
 
     void print(){
-        cout << "Class setup(shared & weights alloc + desc creation) : " << class_setup_time << " ms\n"
-             << "Pics loading time (GPU)                             : " << pics_load_time << " ms\n"
-             << "Forward time (GPU)                                  : " << forward_time << " ms\n"
+        cout << "Class setup(shared & weights alloc + desc creation) : " << class_setup_time.avg_time << " +"<< class_setup_time.variance << " ms\n"
+             << "Pics loading time (GPU)                             : " << pics_load_time.avg_time << " +"<< pics_load_time.variance << " ms\n"
+             << "Forward time (GPU)                                  : " << forward_time.avg_time << " +"<< forward_time.variance<< " ms\n"
              << "Total time (CPU)                                    : " << total_time.avg_time << " +"<< total_time.variance<< " ms\n";
     }
 
@@ -106,10 +130,13 @@ struct vit_time{
                 << "\"ln_elem_per_thread\": "  << ELEMENTS_PER_TH << "\n"
             << "},\n"
             << "\"time\": {\n"
-                << "\"class_setup_time\":"   << class_setup_time << ",\n"
-                << "\"pics_load_time\":"     << pics_load_time << ",\n"
-                << "\"forward_time\":"       << forward_time << ",\n"
+                << "\"class_setup_time\":"   << class_setup_time.avg_time << ",\n"
+                << "\"pics_load_time\":"     << pics_load_time.avg_time << ",\n"
+                << "\"forward_time\":"       << forward_time.avg_time << ",\n"
                 << "\"total_time\":"         << total_time.avg_time << ",\n"
+                << "\"var_class_setup_time\":"<< class_setup_time.variance << ",\n"
+                << "\"var_pics_load_time\":" << pics_load_time.variance << ",\n"
+                << "\"var_forward_time\":"   << forward_time.variance << ",\n"
                 << "\"var_total_time\":"     << total_time.variance << "\n"
                 << "}\n"
         << "}\n";
@@ -175,7 +202,7 @@ vit_time vit_forward(
     gpu_vit.allocate_weights();
     gpu_vit.load_weights(pe_w, blk_w, ph_w);
     
-    float avg_pics_load = time_kernel(WARM_UP, N, stream, [&]() {
+    benchmark_time avg_pics_load = time_kernel_variance(WARM_UP, N, stream, [&]() {
         gpu_vit.load_pics(gpu_pics);
     });
 
@@ -184,11 +211,11 @@ vit_time vit_forward(
     for(int i = 0; i < conv_dim.batch; i++)
         gpu_predictions[i] = gpu_vit.ph.class_prediction[i];
 
-    float avg_forward = time_kernel(WARM_UP, N, stream, [&]() {
+    benchmark_time avg_forward = time_kernel_variance(WARM_UP, N, stream, [&]() {
         gpu_vit.forward();
     });
 
-    return vit_time(0.0f, avg_pics_load, avg_forward);
+    return vit_time(0.0f, avg_pics_load, avg_forward, 0.0f);
 }
 
 // 3) From the model creation to the final classification, memory efficient approach

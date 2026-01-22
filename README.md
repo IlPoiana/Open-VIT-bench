@@ -170,22 +170,33 @@ Is represented by `gpu_layer.cu`
 
 
 ## Benchmarks
+### Component numerical tests  
+...
 
-
+Ex.
 ```bash
 make test_bin/<component_name>_bench.exe
 ```
 
 
+### Component benchmarks 
+This benchmarks are designed for testing component performance. 
+All the bechmarks are configurable by passing the corresponing flag to them.
 
-OLD BENCHMARKS to DECIDE WHAT to KEEP
-check:
-  gpu_datatypes
-  test_component.exe 
+Ex.
+
+> [!Note]
+> For the layer norm and all the components that have it inside, if you want to change the default value, is necessary to compile the file through the `TOKENS_PER_BLOCK` and `ELEMENTS_PER_TH` flags. This can be took as reference from the bash benchmarks files
+  
+### Results reproducibility
+To reproduce the results, I suggest to use the bash scripts present under `gpu_scripts/benchmarks` directory.
+Alternatively, is possible to launch singularly benchmarks through the `*_bench.cu` programs present under the `benchmarks`
+
+Ex.
 
 
 ### Datasets creations
 To create the datasets `bash create_benchmark_datasets.sh`
-### Test launch
 
 ### Visualization
+python scripts

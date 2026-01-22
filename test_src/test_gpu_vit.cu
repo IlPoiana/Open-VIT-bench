@@ -2,10 +2,6 @@
 #include "../gpu_include/gpu_vit.h"
 
 void cpu_gpu_comparison(int argc, char * argv[]){
-    /*
-    TO DO: passing arguments like conv2d bench to test on the data set
-    for now, same data as cpp test just for comparison
-    */
     assert(argc > 2);
     
     //loading the batch
@@ -126,21 +122,8 @@ void cpu_gpu_comparison(int argc, char * argv[]){
     return;
 }
 
-void gpu_comparison(){
-    // -- One stream --
-
-
-    // -- Multi stream --
-}
-
 int main(int argc, char * argv[]) {
-    test_type test = CPU_COMPARISON;
-    if(test == CPU_COMPARISON){
-        cpu_gpu_comparison(argc, argv);
-    }
-    else{
-        gpu_comparison();
-    }
+    cpu_gpu_comparison(argc, argv);
 
     return 0;
 }

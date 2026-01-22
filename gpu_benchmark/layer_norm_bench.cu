@@ -323,7 +323,6 @@ int main(int argc, char** argv)
         avg_time.to_JSON(batch, new int[2]{2, tokens_per_block});
     }
     if (kernel_id == 0 || kernel_id == 4){
-        /*TO REMOVE*/ cout << "TO REMOVE: " << TOKENS_PER_BLOCK << " - " << ELEMENTS_PER_TH << endl;
         cout << "|| Multi-token & element CUB layer norm ||" << endl;
         benchmark_time avg_time = bench_multi_tok_elem_cub_ln(
             (half*)d_input, (half*)d_output,

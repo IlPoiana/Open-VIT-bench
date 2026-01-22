@@ -13,6 +13,15 @@ mtx::mtx(u_int row, u_int col){
     data = (half*)malloc(sizeof(half) * row * col);
 }
 
+mtx::~mtx(){
+    free(data);
+}
+
+h_tensor::~h_tensor(){
+    free(data);
+}
+
+
 h_tensor::h_tensor(float * f32_data, u_int16_t batch, u_int16_t channels, u_int16_t height, u_int16_t width):
     B(batch),
     C(channels),

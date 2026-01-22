@@ -7,7 +7,7 @@ u_long new_seed(){
         .count();
 }
 
-void compare_results(PredictionBatch &cpu_pb, half * gpu_pred, vector<int> class_prediction, bool show_predictions = false){
+void compare_results(PredictionBatch &cpu_pb, half * gpu_pred, int * class_prediction, bool show_predictions = false){
     u_int batch = cpu_pb.get_B(), class_num = cpu_pb.get_CLS();
     vector<float> probabilities_array(batch * class_num);
     double avg = 0; int class_correctly_classified = 0;
@@ -40,17 +40,22 @@ void compare_results(PredictionBatch &cpu_pb, half * gpu_pred, vector<int> class
     
 }
 
-void gpu_comparison(bool debug){
+void cpu_gpu_comparison(bool debug){
     u_int batch = 256, tokens = 197, embeddings = 768, class_num = 100;
     u_long seed = 0;
     if(debug){
         batch = 2; tokens = 16; embeddings = 16; class_num = 8;  
     }
-    
+    cout << "Input tensor:\n"
+    << "[" << batch << ","<< tokens << ","<< embeddings << "]" << endl;
+    cout << "Output tensor:\n"
+    << "[" << batch << ","<< class_num << "]" << endl;
+
+
     u_int input_elements_number = batch * tokens * embeddings;
     double epsilon = 1e-4;
 
-    // Random generation
+    // - Random generation
     float * h_x, * h_ln_scale, * h_ln_bias, * h_lin_w, * h_lin_bias;
     float * og_h_x;
     h_x        = (float *)malloc(sizeof(float) * input_elements_number);
@@ -60,16 +65,11 @@ void gpu_comparison(bool debug){
     h_lin_bias = (float *)malloc(sizeof(float) * class_num);
     og_h_x     = (float *)malloc(sizeof(float) * input_elements_number);
 
-    seed = new_seed();
-    rand_init(h_x, input_elements_number, 0.1f, seed);
-    seed = new_seed();
-    rand_init(h_ln_scale, embeddings, 0.1f, seed);
-    seed = new_seed();
-    rand_init(h_ln_bias, embeddings, 0.1f, seed);
-    seed = new_seed();
-    rand_init(h_lin_w, embeddings * class_num, 0.1f, seed);
-    seed = new_seed();
-    rand_init(h_lin_bias, class_num, 0.1f, seed);
+    rand_init(h_x, input_elements_number, 0.1f,new_seed());
+    rand_init(h_ln_scale, embeddings, 0.1f,new_seed());
+    rand_init(h_ln_bias, embeddings, 0.1f,new_seed());
+    rand_init(h_lin_w, embeddings * class_num, 0.1f,new_seed());
+    rand_init(h_lin_bias, class_num, 0.1f,new_seed());
     
 
     half * gpu_x, * gpu_ln_scale, * gpu_ln_bias, * gpu_lin_w, * gpu_lin_bias;
@@ -100,7 +100,7 @@ void gpu_comparison(bool debug){
     CUDA_CHECK(cudaMemcpy(d_lin_w    , gpu_lin_w    , sizeof(half) * embeddings * class_num, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_lin_bias , gpu_lin_bias , sizeof(half) * class_num, cudaMemcpyHostToDevice));
 
-    // CPU REFERENCE
+    // -- CPU reference --
     /*
     N = Class_num E = embeddings
     X [B,T,E] 
@@ -147,7 +147,7 @@ void gpu_comparison(bool debug){
         cout << "Prediction batch: " << endl; pb.print();
     }
     
-    // GPU 
+    // -- GPU -- 
     cudaStream_t stream(0);
     cublasLtHandle_t cublas_handle;
     CUBLAS_CHECK(cublasLtCreate(&cublas_handle));
@@ -156,8 +156,7 @@ void gpu_comparison(bool debug){
 
     void * d_workspace; cudaMalloc(&d_workspace, (size_t) MLP_WORKSPACE_SIZE);
 
-    // -- GPU class
-    // f32_to_f16(og_h_x,gpu_x,input_elements_number);
+    // -GPU class
     CUDA_CHECK(cudaMemcpy(d_x, gpu_x, sizeof(half) * input_elements_number, cudaMemcpyHostToDevice));
 
     GpuPredictionHead gpu_ph(
@@ -174,7 +173,6 @@ void gpu_comparison(bool debug){
 
     gpu_ph.forward(debug);
     gpu_ph.compute_predictions();
-    // cudaStreamSynch(...) wait until all the streams have finished
 
     gpu_ph.mark_shared_buffers(); //Using device buffers previously allocated
     gpu_ph.mark_shared_weights(); //Using precedentely allocated weights
@@ -187,11 +185,15 @@ void gpu_comparison(bool debug){
     cudaStreamSynchronize(stream);
     compare_results(pb, gpu_x, gpu_ph.class_prediction);
 
+    // -- Cleanup
+    free(h_x); free(h_ln_scale); free(h_ln_bias); free(h_lin_w); free(h_lin_bias); free(og_h_x);
+    free(gpu_x); free(gpu_ln_scale); free(gpu_ln_bias); free(gpu_lin_w); free(gpu_lin_bias);
+
 }
 
 int main() {
     bool debug = false;
-    gpu_comparison(debug);
+    cpu_gpu_comparison(debug);
 
     return 0;
 }

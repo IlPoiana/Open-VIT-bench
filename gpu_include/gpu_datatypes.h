@@ -26,6 +26,8 @@ struct h_tensor {
     u_int16_t W;
 
     h_tensor(float * f32_data, u_int16_t batch, u_int16_t channels, u_int16_t height, u_int16_t width);
+
+    ~h_tensor();
 };
 
 //Used in the test_* files to choose which comparison perform
