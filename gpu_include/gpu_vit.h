@@ -93,8 +93,8 @@ class GpuVit {
             vit_size _depth = 12,
             vit_size  _num_heads = 12,
             vit_float _scale_val = 1.0,
-            double    _block_epsilon = 1e-6,
-            double    _ph_epsilon = 1e-6,
+            double    _block_epsilon = 1e-5,
+            double    _ph_epsilon = 1e-5,
             vit_size mlp_hidden = 3072,
 
             vit_bool init_pe_descriptors = true,

@@ -15,6 +15,7 @@ struct mtx {
 
     mtx(float * f32_data, u_int16_t row, u_int16_t col);
     mtx(u_int row, u_int col);
+    ~mtx();
 };
 
 // B,C,H,W
@@ -28,10 +29,4 @@ struct h_tensor {
     h_tensor(float * f32_data, u_int16_t batch, u_int16_t channels, u_int16_t height, u_int16_t width);
 
     ~h_tensor();
-};
-
-//Used in the test_* files to choose which comparison perform
-enum test_type{
-    CPU_COMPARISON,
-    GPU_COMPARISON
 };

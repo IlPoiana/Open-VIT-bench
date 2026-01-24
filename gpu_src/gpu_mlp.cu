@@ -172,7 +172,7 @@ void create_cublasLt_linlay_desc(
     u_int N = B * T;
     // -- Descriptor creation --
     //-Matmul creation
-    CUBLAS_CHECK(cublasLtMatmulDescCreate(&matmul.matmulDesc,MLP_COMPUTE_DATA_TYPE, CUDA_R_32F)); // Scale type CUDA_R_16F not supported(doc)
+    CUBLAS_CHECK(cublasLtMatmulDescCreate(&matmul.matmulDesc, MLP_COMPUTE_DATA_TYPE, CUDA_R_32F)); // Scale type CUDA_R_16F not supported(doc)
 
     cublasOperation_t Avalue = CUBLAS_OP_N;
     cublasOperation_t Bvalue = CUBLAS_OP_N;
@@ -373,11 +373,10 @@ void strided_linear_layer(
  */
 void fused_linear_layer(
     cublasLtHandle_t &handle, cudaStream_t & stream,
-    cublasLt_matmul_desc &matmul,cublasLtMatmulAlgo_t &algo,void * d_workspace,
-    void * d_x, void * d_fc, void * d_b, 
-    void * y
+    cublasLt_matmul_desc &matmul, cublasLtMatmulAlgo_t &algo, void * d_workspace,
+    void * d_x, void * d_fc, void * d_b, void * y
 ){
-    
+
     CUBLAS_CHECK(cublasLtMatmul(
         handle, matmul.matmulDesc, &matmul.alpha,
         d_x, matmul.xDesc,
@@ -387,7 +386,6 @@ void fused_linear_layer(
         y, matmul.yDesc,
         &algo, d_workspace, (size_t)MLP_WORKSPACE_SIZE, stream
     ));
-    // CUDA_CHECK(cudaStreamSynchronize(stream)); //not necessary cause on the same stream
     return;
 }
 
@@ -510,7 +508,8 @@ void linear_layer(
     else    
         bias<<<block_num,block_dim,0,stream>>>((half *)d_y, (half *)d_b, K, B*T*K);
     CUDA_CHECK(cudaStreamSynchronize(stream));
-
+    cudaFree(d_workspace);
+    matmul.destroy_descriptors();
     return;
 
 }
@@ -574,86 +573,6 @@ void fused_gpu_mlp(
         d_h, d_fc2, d_b2, d_y,
         false, false
     );
-    return;
-}
-
-void cuBLAS_test(cublasLtHandle_t & handle, cudaStream_t & stream){
-    u_int M = 2, N = 3, K = 4;
-    
-    float a[M*K] = {1.0,1.0,1.0,1.0};//{1.0}; // {1.0,1.0}; 
-    float b[N*K] = {1.0,1.0,1.0,1.0};//{1.0}; // {1.0,1.0,1.0,1.0,1.0};
-    float c[M*N] = { 1.0,0.0,1.0,0.0,1.0,0.0};//{0.0}; // {1.0,1.0};
-    float d[M*N] = {0.0}; // all zeros
-
-    mtx A(a,M,K) ,B(b,K,N), C(c,M,N), D(d,M,N);
-
-    void * d_A, * d_B,* d_C ,* d_D;
-    CUDA_CHECK(cudaMalloc(&d_A,sizeof(half) * M * K)); cudaMemcpy(d_A, A.data, sizeof(half) * M * K, cudaMemcpyHostToDevice);
-    CUDA_CHECK(cudaMalloc(&d_B,sizeof(half) * N * K)); cudaMemcpy(d_B, B.data, sizeof(half) * N * K, cudaMemcpyHostToDevice);
-    CUDA_CHECK(cudaMalloc(&d_C,sizeof(half) * M * N)); cudaMemcpy(d_C, C.data, sizeof(half) * M * N, cudaMemcpyHostToDevice);
-    CUDA_CHECK(cudaMalloc(&d_D,sizeof(half) * M * N)); cudaMemcpy(d_D, D.data, sizeof(half) * M * N, cudaMemcpyHostToDevice);
-
-    
-    // -- Descriptor creation --
-    //-Matmul creation
-    cublasLtMatmulDesc_t matmulDesc; CUBLAS_CHECK(cublasLtMatmulDescCreate(&matmulDesc,MLP_COMPUTE_DATA_TYPE, CUDA_R_32F)); // Scale type CUDA_R_16F not supported(doc)
-
-    cublasOperation_t Avalue = CUBLAS_OP_N;
-    cublasOperation_t Bvalue = CUBLAS_OP_N;
-    CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_TRANSA,&Avalue, sizeof(cublasOperation_t))); // do not transpose x
-    CUBLAS_CHECK(cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_TRANSB,&Bvalue, sizeof(cublasOperation_t))); // transpose fc
-    //Transpose for C not supported(doc)
-    
-    //-Epilogue creation
-    // cublasLtEpilogue_t epi = CUBLASLT_EPILOGUE_GELU;
-
-    // cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_EPILOGUE, &epi, sizeof(epi));
-
-    cublasLtMatrixLayout_t xDesc; CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&xDesc,MLP_DATA_TYPE,M,K,K)); 
-    // cublasLtMatrixLayout_t xDesc; CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&xDesc,MLP_DATA_TYPE,B*T,C,B*T)); // col-major
-    cublasLtMatrixLayout_t fcDesc; CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&fcDesc,MLP_DATA_TYPE,K,N,K));
-    // cublasLtMatrixLayout_t cDesc; CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&cDesc,MLP_DATA_TYPE,B*T,K,K)); 
-    // cublasLtMatrixLayout_t yDesc; CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&yDesc,MLP_DATA_TYPE,B*T,K,K));
-    cublasLtMatrixLayout_t cDesc; CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&cDesc,MLP_DATA_TYPE,M,N,M)); // Specifically the leading dimension of C can be 0 to achieve row or column broadcast.
-    cublasLtMatrixLayout_t yDesc; CUBLAS_CHECK(cublasLtMatrixLayoutCreate(&yDesc,MLP_DATA_TYPE,M,N,M)); // have to be col-major to enable the epilouge(fused kernel)
-
-    //-Layout setting
-    cublasLtOrder_t row = CUBLASLT_ORDER_ROW, col = CUBLASLT_ORDER_COL;
-
-    // CUBLAS_CHECK(cublasLtMatrixLayoutSetAttribute(xDesc,CUBLASLT_MATRIX_LAYOUT_ORDER,&row,sizeof(cublasLtOrder_t))); // row-major
-    CUBLAS_CHECK(cublasLtMatrixLayoutSetAttribute(xDesc,CUBLASLT_MATRIX_LAYOUT_ORDER,&row,sizeof(cublasLtOrder_t)));
-    
-    // CUBLAS_CHECK(cublasLtMatrixLayoutSetAttribute(fcDesc,CUBLASLT_MATRIX_LAYOUT_ORDER,&row,sizeof(cublasLtOrder_t)));
-    CUBLAS_CHECK(cublasLtMatrixLayoutSetAttribute(fcDesc,CUBLASLT_MATRIX_LAYOUT_ORDER,&col,sizeof(cublasLtOrder_t)));
-    
-    // CUBLAS_CHECK(cublasLtMatrixLayoutSetAttribute(cDesc,CUBLASLT_MATRIX_LAYOUT_ORDER,&row,sizeof(cublasLtOrder_t))); // Setting C & D row-major
-    // CUBLAS_CHECK(cublasLtMatrixLayoutSetAttribute(yDesc,CUBLASLT_MATRIX_LAYOUT_ORDER,&row,sizeof(cublasLtOrder_t)));
-    CUBLAS_CHECK(cublasLtMatrixLayoutSetAttribute(cDesc,CUBLASLT_MATRIX_LAYOUT_ORDER,&col,sizeof(cublasLtOrder_t))); // Setting C & D col-major
-    CUBLAS_CHECK(cublasLtMatrixLayoutSetAttribute(yDesc,CUBLASLT_MATRIX_LAYOUT_ORDER,&col,sizeof(cublasLtOrder_t)));
-    // cout << "Finished Layout" << endl;
-
-    // -- alpha and beta definition --
-    // half alpha = __float2half(1.0), beta = __float2half(0.0);
-    float alpha = 1.0f, beta = 1.0f;
-    CUBLAS_CHECK(cublasLtMatmul(
-        handle, matmulDesc, &alpha,
-        d_A, xDesc,
-        d_B, fcDesc,
-        &beta,
-        d_C, cDesc,
-        d_D, yDesc,
-        nullptr, nullptr, 0, stream
-    ));
-
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-    
-    half * y = (half *)malloc(sizeof(half) * M * N);
-    
-    CUDA_CHECK(cudaMemcpy(y, d_D, sizeof(half) * M * N, cudaMemcpyDeviceToHost));
-    for(u_int i = 0; i < M * N; i++){
-        if(i % N == 0) cout << endl;
-        cout << " " << __half2float(y[i]) << " ";
-    }
     return;
 }
 

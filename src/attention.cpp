@@ -281,7 +281,6 @@ void Attention::from_ifstream(std::ifstream& is) {
 void Attention::forward(const Tensor& x_in, Tensor& x_out) const {
     Tensor query, key, value;
     
-    //UNCOMMENT
     q_gen(x_in, query);
     k_gen(x_in, key);
     v_gen(x_in, value);
@@ -292,7 +291,6 @@ void Attention::forward(const Tensor& x_in, Tensor& x_out) const {
     }
     multi_head_attention(query, key, value, scale, x_out, num_heads, head_dim);
 
-    //UNCOMMENT
     proj(x_out,x_out);
 }
 

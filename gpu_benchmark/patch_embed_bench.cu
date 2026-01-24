@@ -227,7 +227,7 @@ void single_run(
 
 
 int main(int argc, char** argv){
-    int kernel              = get_arg(argc, argv, "--kernel", 0);
+    int kernel              = get_arg(argc, argv, "--kernel", 1);
     int batch               = get_arg(argc, argv, "--batch", 32);
     int embeddings          = get_arg(argc, argv, "--embeddings", 768);
     int block_dim           = get_arg(argc, argv, "--block_dim", 256);

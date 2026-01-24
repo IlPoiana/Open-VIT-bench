@@ -163,64 +163,11 @@ __device__ void dev_block_layer_norm(
 
 /*
 Enhanced version which uses CUB reduction for better performances
-Elements per thread and threads number fixed(2 elements per thread, 384 threads per block) for encoder block LN 
+- Elements per thread and threads number fixed(2 elements per thread, 384 threads per block) for encoder block LN 
+- Using shared memory from the main loop to fetch only once the bias and scale variables(multi token per block)
 Requirements:
 - CUB_LAYER_BLOCK_DIM have to be EMBEDDINGS_SIZE / 2 (also embeddings size have to be even)
 */
-__device__ void cub_dev_block_ln(
-    u_int idx,u_int global_idx,               // N = B*T (flattened), C = channels
-    half * x_data, half * out,      // device pointers
-    half * scale, half * bias,
-    half epsilon
-){
-    using BlockReduce = cub::BlockReduce<half, CUB_LAYER_BLOCK_DIM>;
-    __shared__ typename BlockReduce::TempStorage cub_shared_storage;
-    half th_data[2];
-    half x_buff[2]; // used to stored the fetched data
-    half th_aggregate; // the result is shared across all the threads
-
-    __shared__ half mean;
-    __shared__ half variance;
-    
-    half c = __int2half_rn(EMBEDDINGS_SIZE);
-    u_int stride = CUB_LAYER_BLOCK_DIM;
-
-    if(idx < stride){
-        // load 2 elements per thread, to increase threads occupancy!
-        th_data[0] = x_data[global_idx];
-        x_buff[0] = th_data[0];
-        
-        th_data[1] = x_data[global_idx + stride];
-        x_buff[1] = th_data[1];
-
-        th_aggregate = BlockReduce(cub_shared_storage).Sum(th_data);
-
-    }
-    if(idx == 0)
-        mean = th_aggregate / c;
-    __syncthreads(); // suggested by the doc
-    
-    if(idx < stride){
-        
-        th_data[0] = (x_buff[0] - mean) * (x_buff[0] - mean);
-        th_data[1] = (x_buff[1] - mean) * (x_buff[1] - mean);
-        th_aggregate = BlockReduce(cub_shared_storage).Sum(th_data);
-        
-    }
-    if(idx == 0)
-        variance = th_aggregate / c;
-
-    __syncthreads();
-
-    if(idx < stride){
-    
-        out[global_idx] = (((x_buff[0] - mean) * hrsqrt( variance + epsilon)) * scale[0]) + bias[0] ;        
-        out[global_idx + stride] = (((x_buff[1] - mean) * hrsqrt( variance + epsilon)) * scale[1]) + bias[1] ;
-        
-    }  
-}
-
-//Using shared memory from the main loop to fetch only once the bias and scale variables(multi token per block)
 __device__ void cub_dev_block_ln(
     u_int idx,u_int global_idx,               // N = B*T (flattened), C = channels
     half * x_data, half * out,      // device pointers
@@ -319,20 +266,20 @@ __device__ void cub_dev_block_ln(
 __device__ void dev_multi_elem_cub_ln(
     u_int idx,u_int global_idx,               // N = B*T (flattened), C = channels
     half * x_data, half * out,      // device pointers
-    half * scale, half * bias,
-    half epsilon, 
-    cub::BlockReduce<half, CUB_LAYER_MULTI_BLOCK_DIM> &BlockReduce
+    float * scale, float * bias,
+    float epsilon, 
+    cub::BlockReduce<float, CUB_LAYER_MULTI_BLOCK_DIM> &BlockReduce
 ){
     // using BlockReduce = cub::BlockReduce<half, CUB_LAYER_BLOCK_DIM>;
     // __shared__ typename BlockReduce::TempStorage cub_shared_storage;
-    half th_data[ELEMENTS_PER_TH];
-    half x_buff[ELEMENTS_PER_TH]; // used to stored the fetched data
-    half th_aggregate; // the result is shared across all the threads
+    float th_data[ELEMENTS_PER_TH];
+    float x_buff[ELEMENTS_PER_TH]; // used to stored the fetched data
+    float th_aggregate; // the result is shared across all the threads
 
-    __shared__ half mean;
-    __shared__ half variance;
+    __shared__ float mean;
+    __shared__ float variance;
     
-    half c = __int2half_rn(EMBEDDINGS_SIZE);
+    float c = EMBEDDINGS_SIZE;
     u_int stride = CUB_LAYER_MULTI_BLOCK_DIM; 
     // u_int offset = global_idx + (idx * (ELEMENTS_PER_TH - 1)); 
     u_int offset;
@@ -366,7 +313,7 @@ __device__ void dev_multi_elem_cub_ln(
     if(idx < stride){
         for(u_int i = 0; i< ELEMENTS_PER_TH; i++){
             offset = global_idx + stride * i;
-            out[offset] = (((x_buff[i] - mean) * hrsqrt( variance + epsilon)) * scale[i]) + bias[i] ;        
+            out[offset] = (((x_buff[i] - mean) * rsqrt( variance + epsilon)) * scale[i]) + bias[i];        
         }
     }  
     return;
@@ -377,20 +324,19 @@ __device__ void dev_multi_elem_cub_ln(
 __device__ void dev_unrolled_multi_elem_cub_ln(
     u_int idx,u_int global_idx,               // N = B*T (flattened), C = channels
     half * x_data, half * out,      // device pointers
-    half * scale, half * bias,
-    half epsilon, 
-    cub::BlockReduce<half, CUB_LAYER_MULTI_BLOCK_DIM> &BlockReduce
+    float * scale, float * bias,
+    float epsilon, 
+    cub::BlockReduce<float, CUB_LAYER_MULTI_BLOCK_DIM> &BlockReduce
 ){
-    // using BlockReduce = cub::BlockReduce<half, CUB_LAYER_BLOCK_DIM>;
-    // __shared__ typename BlockReduce::TempStorage cub_shared_storage;
-    half th_data[ELEMENTS_PER_TH];
-    half x_buff[ELEMENTS_PER_TH]; // used to stored the fetched data
-    half th_aggregate; // the result is shared across all the threads
 
-    __shared__ half mean;
-    __shared__ half variance;
+    float th_data[ELEMENTS_PER_TH];
+    float x_buff[ELEMENTS_PER_TH]; // used to stored the fetched data
+    float th_aggregate; // the result is shared across all the threads
+
+    __shared__ float mean;
+    __shared__ float variance;
     
-    half c = __int2half_rn(EMBEDDINGS_SIZE);
+    float c = EMBEDDINGS_SIZE;
        
 
     #pragma unroll
@@ -418,7 +364,7 @@ __device__ void dev_unrolled_multi_elem_cub_ln(
 
     #pragma unroll
     for(u_int i = 0; i< ELEMENTS_PER_TH; i++){
-        out[global_idx + blockDim.x * i] = (((x_buff[i] - mean) * hrsqrt( variance + epsilon)) * scale[i]) + bias[i] ;        
+        out[global_idx + blockDim.x * i] = (((x_buff[i] - mean) * rsqrt( variance + epsilon)) * scale[i]) + bias[i] ;        
     }  
     return;
 }
@@ -555,7 +501,7 @@ __global__ void cub_layer_norm(
 __global__ void cub_single_layer_norm(
     half * x_data, half * out,     // device pointers
     half * scale, half * bias,      // device pointers
-    half epsilon, 
+    float epsilon, 
     u_int tokens_per_block
 ){
     u_int local_idx = threadIdx.x;
@@ -592,20 +538,20 @@ __global__ void cub_single_layer_norm(
 __global__ void multi_elem_cub_ln(
     half * x_data, half * y,     // device pointers
     half * scale, half * bias,      // device pointers
-    half epsilon, 
+    float epsilon, 
     u_int tokens_per_block
 ){
     u_int local_idx = threadIdx.x;
     u_int global_idx = blockIdx.x * EMBEDDINGS_SIZE * tokens_per_block + local_idx;
     
-    half th_bias[ELEMENTS_PER_TH], th_scale[ELEMENTS_PER_TH];
+    float th_bias[ELEMENTS_PER_TH], th_scale[ELEMENTS_PER_TH];
     
     for(u_int i = 0; i < ELEMENTS_PER_TH; i++){
         th_bias[i] = bias[local_idx + i * blockDim.x];         
         th_scale[i] = scale[local_idx+ i * blockDim.x]; 
     }
 
-    using BlockReduce = cub::BlockReduce<half, CUB_LAYER_MULTI_BLOCK_DIM>;
+    using BlockReduce = cub::BlockReduce<float, CUB_LAYER_MULTI_BLOCK_DIM>;
     __shared__ __align__(16) BlockReduce::TempStorage cub_shared_storage;
     BlockReduce block_reduce(cub_shared_storage);
     //Compute the stride between tokens
@@ -628,12 +574,12 @@ __global__ void multi_elem_cub_ln(
 __global__ void unrolled_multi_elem_cub_ln(
     half * x_data, half * y,     // device pointers
     half * scale, half * bias,      // device pointers
-    half epsilon
+    float epsilon
 ){
     u_int local_idx = threadIdx.x;
     u_int global_idx = blockIdx.x * EMBEDDINGS_SIZE * TOKENS_PER_BLOCK + local_idx;
     
-    half th_bias[ELEMENTS_PER_TH], th_scale[ELEMENTS_PER_TH];
+    float th_bias[ELEMENTS_PER_TH], th_scale[ELEMENTS_PER_TH];
     
     #pragma unroll
     for(u_int i = 0; i < ELEMENTS_PER_TH; i++){
@@ -641,13 +587,13 @@ __global__ void unrolled_multi_elem_cub_ln(
         th_scale[i] = scale[local_idx+ i * CUB_LAYER_MULTI_BLOCK_DIM]; 
     }
 
-    using BlockReduce = cub::BlockReduce<half, CUB_LAYER_MULTI_BLOCK_DIM>;
+    using BlockReduce = cub::BlockReduce<float, CUB_LAYER_MULTI_BLOCK_DIM>;
     __shared__ __align__(16) BlockReduce::TempStorage cub_shared_storage;
     BlockReduce block_reduce(cub_shared_storage);
     
     //Compute the stride between tokens
     u_int loop_idx = 0;
-    #pragma unroll // This when the token embeddings and the token number is fixed will help a lot
+    #pragma unroll // This can be done when the token embeddings and the token number is fixed
     for(u_int token = 0; (token < TOKENS_PER_BLOCK); ++token){
         loop_idx = global_idx + EMBEDDINGS_SIZE * token;
         dev_unrolled_multi_elem_cub_ln(

@@ -3,8 +3,8 @@ BLOCK_DIM=(256)
 TOKENS_PER_BLOCK=(2 4 8) #Keep only the good values from the tests
 ELEMENTS_PER_TH=(8) #Keep only the good values from the tests
 
-BATCHES=(2 4 8 16 32 64 128 256 512 1024 2048)
-# BATCHES=(256 512 1024)
+# BATCHES=(2 4 8 16 32 64 128 256 512 1024 2048)
+BATCHES=(64 256)
 
 mkdir -p gpu_out/block_bench
 for tok in "${TOKENS_PER_BLOCK[@]}"; do

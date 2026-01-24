@@ -458,13 +458,12 @@ void GpuBlock::load_weights(
 
 
 void GpuBlock::random_data(bool attn_init, bool input){
-    cout << "ln" << endl;
     //Layer norm
     populate_rand(d_n1_bias ,channels);
     populate_rand(d_n1_scale,channels); //TO CHECK channels
     populate_rand(d_n2_bias ,channels);
     populate_rand(d_n2_scale,channels);
-    cout << "mlp" << endl;
+
     //Mlp
     populate_rand(d_fc1    , channels * k_channels);
     populate_rand(d_b1_data, k_channels);
@@ -486,11 +485,8 @@ void GpuBlock::random_data(bool attn_init, bool input){
         CUDA_CHECK(cudaMemcpy(d_b1_mtx,h_b1_mtx.data(), sizeof(half) * hidden_elements_number, cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(d_b2_mtx,h_b2_mtx.data(), sizeof(half) * input_elements_number, cudaMemcpyHostToDevice));
 
-        // populate_rand(d_b1_mtx , hidden_elements_number);
-        // populate_rand(d_b2_mtx , input_elements_number);
     }
 
-    cout << "attn" << endl;
     //Attention
     if(!attn_init){
         populate_rand(h_q, channels * channels);
@@ -504,23 +500,18 @@ void GpuBlock::random_data(bool attn_init, bool input){
         this->init_attn_descriptor();
     }
     if(input){
-        cout << "input" << endl;
         //Input data
         populate_rand(d_x, input_elements_number);
     }
 }
 
 void GpuBlock::forward_vit(){
-    
-
-    //Variables init
-    half gpu_epsilon = __float2half(epsilon);
 
     //-Layer Norm    
     unrolled_multi_elem_cub_ln<<<ln_blocks_n, ln_block_dim, 0, stream>>>(
         (half*)d_x, (half*)d_y,
         (half *)d_n1_scale, (half *)d_n1_bias, 
-        gpu_epsilon
+        epsilon
     );
 
     //-Attention
@@ -537,7 +528,7 @@ void GpuBlock::forward_vit(){
     unrolled_multi_elem_cub_ln<<<ln_blocks_n, ln_block_dim, 0, stream>>>(
         (half*)d_x, (half*)d_y,
         (half *)d_n2_scale, (half *)d_n2_bias, 
-        gpu_epsilon
+        epsilon
     );
 
     //-MLP
@@ -582,26 +573,8 @@ void GpuBlock::forward(bool debug, u_int tokens_per_block){
     u_int ln_blocks_n = (batch * tokens) / tokens_per_block;
     assert(((batch * tokens) % tokens_per_block) == 0);
 
-    //Variables init
-    half gpu_epsilon = __float2half(epsilon);
-
     //-Layer Norm    
-    cub_single_layer_norm<<<ln_blocks_n,channels,0,stream>>>((half *)d_x, (half *)d_y,(half *)d_n1_scale, (half *)d_n1_bias, gpu_epsilon, tokens_per_block);
-    
-    /*TO REMOVE*/
-    // {
-    //     cudaMemcpyAsync(h_debug_out, d_n2_scale, sizeof(half) * channels,cudaMemcpyDeviceToHost,stream);
-    //     cudaStreamSynchronize(stream);
-    //     float * f_debug = (float *)calloc(channels,sizeof(float));
-    //     f16_to_f32(h_debug_out, f_debug, channels);
-    //     RowVector y(f_debug, channels);
-    //     cout << "ln2 scale after ln1" << endl; y.print();
-    //     cudaMemcpyAsync(h_debug_out, d_n2_bias, sizeof(half) * channels,cudaMemcpyDeviceToHost,stream);
-    //     cudaStreamSynchronize(stream);
-    //     f16_to_f32(h_debug_out, f_debug, channels);
-    //     RowVector y2(f_debug, channels);
-    //     cout << "ln2 bias after ln1" << endl; y2.print();
-    // }//----
+    cub_single_layer_norm<<<ln_blocks_n,channels,0,stream>>>((half *)d_x, (half *)d_y,(half *)d_n1_scale, (half *)d_n1_bias, epsilon, tokens_per_block);
 
     if(debug) {cout << "ln1" << endl; print_debug();}
     //-Attention
@@ -610,37 +583,15 @@ void GpuBlock::forward(bool debug, u_int tokens_per_block){
         d_y, d_t,
         fused_desc
     );
-     /*TO REMOVE
-    // cout << "ELEMENTS CHECK" << endl;
-    // cout << input_elements_number << endl;
-    // cout << "d_x "<< d_x << endl;
-    // cout << "d_t "<< d_t << endl;
-    // cout << "d_h "<< d_h << endl;
-    // cout << "d_y "<< d_y << endl;
-    */
-    if(debug) {cout << "attn" << endl; print_debug();}
 
-    /*TO REMOVE*/
-    // {
-    //     cudaMemcpyAsync(h_debug_out, d_n2_scale, sizeof(half) * channels,cudaMemcpyDeviceToHost,stream);
-    //     cudaStreamSynchronize(stream);
-    //     float * f_debug = (float *)calloc(channels,sizeof(float));
-    //     f16_to_f32(h_debug_out, f_debug, channels);
-    //     RowVector y(f_debug, channels);
-    //     cout << "ln2 scale after attn" << endl; y.print();
-    //     cudaMemcpyAsync(h_debug_out, d_n2_bias, sizeof(half) * channels,cudaMemcpyDeviceToHost,stream);
-    //     cudaStreamSynchronize(stream);
-    //     f16_to_f32(h_debug_out, f_debug, channels);
-    //     RowVector y2(f_debug, channels);
-    //     cout << "ln2 bias after attn" << endl; y2.print();
-    // }//----
+    if(debug) {cout << "attn" << endl; print_debug();}
 
     //-Residual
     residual_strided<<<tokens,channels,0,stream>>>((half*)d_t,(half*)d_x, input_elements_number, scale);
     if(debug) {cout << "residual1" << endl; print_debug();}
 
     //-Layer Norm
-    cub_single_layer_norm<<<ln_blocks_n,channels,0,stream>>>((half *)d_x, (half *)d_y, (half *)d_n2_scale, (half *)d_n2_bias, gpu_epsilon, tokens_per_block);
+    cub_single_layer_norm<<<ln_blocks_n,channels,0,stream>>>((half *)d_x, (half *)d_y, (half *)d_n2_scale, (half *)d_n2_bias, epsilon, tokens_per_block);
     if(debug) {cout << "ln2" << endl; print_debug();}
 
     //-MLP
@@ -1130,11 +1081,11 @@ void GpuBlock::print_h_out(){
 
 // helper: pull d_x (B*T*C) back to host_half buffer for debug
 void GpuBlock::download_x(float * h_x) {
-    size_t bytes_xBTc = sizeof(half) * batch * tokens * channels;
-    half * tmp = (half *)malloc(sizeof(half) * batch * tokens * channels); 
+    size_t bytes_input = sizeof(half) * input_elements_number;
+    half * tmp = (half *)malloc(sizeof(half) * input_elements_number); 
 
-    CUDA_CHECK(cudaMemcpy(tmp, d_x, bytes_xBTc, cudaMemcpyDeviceToHost));
-    f16_to_f32(tmp,h_x, batch * tokens * channels);
+    CUDA_CHECK(cudaMemcpy(tmp, d_x, bytes_input, cudaMemcpyDeviceToHost));
+    f16_to_f32(tmp, h_x, input_elements_number);
 }
 
 

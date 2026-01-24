@@ -1,152 +1,28 @@
 #include "../gpu_include/cudnn_conv2d.h"
 #include "../include/conv2d.h"
 
-double compare_results(Tensor &y, half * gpu_y){
+float compare_results(Tensor &y, half * gpu_y){
+    float tolerance = 1e-3f;
     double avg = 0;
+    float gpu_val;
+    float total_elem_num = y.get_B() * y.get_N() * y.get_C();
     for(u_int b = 0; b < y.get_B(); b++){
         for(u_int t = 0; t < y.get_N(); t++){
             for(u_int c = 0; c < y.get_C(); c++){
                 assert(!isnanf( y.at(b,t,c)));
                 assert(!isnanf( __half2float(gpu_y[c + y.get_C() * t + y.get_C() * y.get_N() * b])));
-                avg += (double)abs(y.at(b,t,c) - __half2float(gpu_y[c + y.get_C() * t + y.get_C() * y.get_N() * b]));
-                
+                gpu_val = __half2float(gpu_y[c + y.get_C() * t + y.get_C() * y.get_N() * b]);
+                avg += 
+                    (
+                        (double)abs(y.at(b,t,c) - gpu_val)
+                        /
+                        (double)max(abs(y.at(b,t,c)), tolerance)
+                    )
+                    / total_elem_num;
             }
         }
     }
-    return avg / (double(y.get_B()) * y.get_N() * y.get_C());
-}
-
-void cudnn_conv2d_test(half * h_x, half * h_w, half * h_y, convolution_dim dim){
-    u_int batch = dim.batch, height =  dim.height, width =  dim.width, channels =  dim.channels, embeddings = dim.embeddings;
-    int Ho = dim.Ho, Wo = dim.Wo; //patch size 2x2 => 4 tokens
-    assert(height % Ho == 0); assert(width % Wo == 0);
-    u_int y_height = dim.y_height, y_width = dim.y_width;
-    // 0. Create the cudnn handle
-    cudnnHandle_t handle;
-    CUDNN_CHECK(cudnnCreate(&handle));
-
-    // 1. Create the convolution descriptor and populate it
-    cudnnConvolutionDescriptor_t conv_desc;
-    CUDNN_CHECK(cudnnCreateConvolutionDescriptor(&conv_desc));
-
-    CUDNN_CHECK(cudnnSetConvolutionMathType(conv_desc, CONV_MATH_TYPE)); //Disableing Tensor Core ops
-    CUDNN_CHECK(cudnnSetConvolution2dDescriptor(
-        conv_desc,
-        0,0, //no padding
-        Ho,Wo,
-        1,1, //no dilation
-        CONV_MODE,
-        CONV_DATA_TYPE
-    ));
-
-    // 2. Create x Tensor descriptor [B,C,H,W]
-    cudnnTensorDescriptor_t x_desc;
-    cudnnTensorFormat_t x_format = CUDNN_TENSOR_NCHW;
-    CUDNN_CHECK(
-        cudnnCreateTensorDescriptor(&x_desc)
-    );
-    CUDNN_CHECK(
-        cudnnSetTensor4dDescriptor(
-            x_desc,
-            x_format, 
-            CONV_INPUT_DATA_TYPE,
-            batch, channels, height, width
-        )
-    );
-    // 3. Create the w Tensor descriptor
-    cudnnFilterDescriptor_t w_desc;
-    cudnnTensorFormat_t w_format = CUDNN_TENSOR_NCHW; /*NCHW == KCRS K output C input R filter rows S filter columns*/
-    CUDNN_CHECK(
-        cudnnCreateFilterDescriptor(&w_desc)
-    );
-    CUDNN_CHECK(
-        cudnnSetFilter4dDescriptor(
-            w_desc,
-            CONV_INPUT_DATA_TYPE,
-            w_format,
-            embeddings, channels, Ho, Wo 
-        )
-    );
-    // 4. Create the y Tensor descriptor
-    cudnnTensorDescriptor_t y_desc;
-    cudnnTensorFormat_t y_format = CUDNN_TENSOR_NCHW;
-    CUDNN_CHECK(
-        cudnnCreateTensorDescriptor(&y_desc)
-    );
-    CUDNN_CHECK(
-        cudnnSetTensor4dDescriptor(
-            y_desc,
-            y_format, 
-            CONV_INPUT_DATA_TYPE,
-            batch, embeddings, y_height, y_width
-        )
-    );
-    
-    // 5. Fetch the algorithm for executing the convolution
-    cudnnConvolutionFwdAlgo_t algo; cudnnConvolutionFwdAlgoPerf_t perf_results[10];
-    int returned_algo_count = 0;
-    CUDNN_CHECK(
-        cudnnFindConvolutionForwardAlgorithm(
-            handle,
-            x_desc, w_desc, conv_desc, y_desc,
-            10, &returned_algo_count, perf_results
-        )
-    );
-    algo = perf_results[0].algo;
-
-    // 6. Fetch the workspace size and allocate it
-    void * d_workspace; size_t workspace_size = 0; 
-    CUDNN_CHECK(
-        cudnnGetConvolutionForwardWorkspaceSize(
-            handle,
-            x_desc, w_desc, conv_desc, y_desc,
-            algo, 
-            &workspace_size
-        )
-    )
-    CUDA_CHECK(cudaMalloc(&d_workspace, workspace_size));
-
-    // 7. Allocate everything on the device
-    void * d_x, * d_w, * d_y;
-    CUDA_CHECK(cudaMalloc(&d_x, sizeof(half) * batch * channels * height * width));
-    CUDA_CHECK(cudaMalloc(&d_w, sizeof(half) * embeddings * channels * Ho * Wo));
-    CUDA_CHECK(cudaMemcpy(d_x, h_x, sizeof(half) * batch * channels * height * width, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_w, h_w, sizeof(half) * embeddings * channels * Ho * Wo, cudaMemcpyHostToDevice));
-
-    int y_b, y_c, y_h, y_w;
-    CUDNN_CHECK(
-        cudnnGetConvolution2dForwardOutputDim(
-            conv_desc, x_desc, w_desc,
-            &y_b, &y_c, &y_h, &y_w
-        )
-    );
-    CUDA_CHECK(cudaMalloc(&d_y, sizeof(half) * y_b * y_c * y_h * y_w));
-    cout << "Y" << endl << "["<< y_b<<"," << y_c <<"," << y_h <<","<< y_w <<"]"<< endl;
-
-
-    // 8. Execute the convolution
-    float alpha = 1.0f, beta = 0;
-    CUDNN_CHECK(
-        cudnnConvolutionForward(
-            handle,
-            &alpha,
-            x_desc, d_x, /*x*/
-            w_desc, d_w, /*w*/
-            conv_desc,
-            algo, /*algo*/ 
-            d_workspace, workspace_size,/*workspace*/
-            &beta,
-            y_desc, d_y /*y*/
-        )
-    );
-
-    assert(y_b == batch); assert(y_c == embeddings); assert( y_h == y_height ); assert( y_w == y_width );
-    void * d_out; CUDA_CHECK(cudaMalloc(&d_out,sizeof(half)* y_b * y_c * y_h* y_w));
-    int block_dim = 256, blocks_n = y_b * y_c * y_h* y_w;
-    transpose_tensor3d<<<blocks_n, block_dim>>>((half*)d_y,(half*)d_out,y_b,y_c,y_h * y_w);
-
-    CUDA_CHECK(cudaMemcpy(h_y, d_out,sizeof(half) * batch * embeddings * y_height * y_width ,cudaMemcpyDeviceToHost));
-
+    return float(avg);
 }
 
 
@@ -191,11 +67,6 @@ void cpu_gpu_comparison(bool bias, bool debug = false){
     b_half = (half*)malloc(sizeof(half) * embeddings);
     y_half = (half *)malloc(sizeof(half) * output_elements_number);
 
-    void * d_x, * d_w, * d_b,* d_y;
-    CUDA_CHECK(cudaMalloc(&d_x, sizeof(float) * input_elements_number)); //float now then reassigned to half
-    CUDA_CHECK(cudaMalloc(&d_w, sizeof(float) * filter_elements_number));
-    CUDA_CHECK(cudaMalloc(&d_b, sizeof(float) * embeddings));
-    CUDA_CHECK(cudaMalloc(&d_y, sizeof(half) * output_elements_number));
     
     random_device rd;          
     mt19937 gen(rd());         
@@ -218,6 +89,14 @@ void cpu_gpu_comparison(bool bias, bool debug = false){
     f32_to_f16(h_w, w_half, filter_elements_number);           
     f32_to_f16(h_b, b_half, embeddings); 
 
+    void * d_x, * d_w, * d_b,* d_y;
+    CUDA_CHECK(cudaMalloc(&d_x, sizeof(float) * input_elements_number)); //float now then reassigned to half
+    CUDA_CHECK(cudaMalloc(&d_w, sizeof(float) * filter_elements_number));
+    CUDA_CHECK(cudaMalloc(&d_b, sizeof(float) * embeddings));
+    CUDA_CHECK(cudaMalloc(&d_y, sizeof(half) * output_elements_number));
+    CUDA_CHECK(cudaMemcpy(d_x, x_half, sizeof(float) * input_elements_number, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_w, w_half, sizeof(float) * filter_elements_number, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_b, b_half, sizeof(float) * embeddings, cudaMemcpyHostToDevice));
 
     // 2. CPU reference
     PictureBatch x(h_x, input_elements_number, batch, channels, height, width);
@@ -283,7 +162,7 @@ void cpu_gpu_comparison(bool bias, bool debug = false){
         Tensor gpu_y(h_y, output_elements_number, batch, dim.y_height * dim.y_width , embeddings);
         cout << "gpu_y: " << endl; gpu_y.print();
     }
-    cout << "CPU GPU comparison result: " << compare_results(y, y_half) << endl;
+    cout << "CPU GPU comparison result: " << compare_results(y, y_half) * 100 << "%" << endl;
 
     // -Cleanup
     desc.destroy_descriptors();

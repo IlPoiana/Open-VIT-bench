@@ -539,11 +539,11 @@ void GpuVit::destroy_descriptors(){
 
 
 void GpuVit::print_predictions(bool debug){
-    cout << "   predicted classes: " << endl;
+    cout << "Predicted classes: " << endl;
     for(int i = 0; i < batch; i++)
         cout << i << ": " << ph.class_prediction[i] << endl;
     if(debug){
-        cout << "probabilities array\n[";
+        cout << "Probabilities array\n[";
         for(int b = 0; b < batch; b++){   
             for(int i = 0; i< num_classes; i++)
                 cout << __half2float(ph.gpu_x[b * num_classes + i]) << " ";

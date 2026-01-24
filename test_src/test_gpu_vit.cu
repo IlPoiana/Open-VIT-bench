@@ -2,7 +2,7 @@
 #include "../gpu_include/gpu_vit.h"
 
 void cpu_gpu_comparison(int argc, char * argv[]){
-    assert(argc > 2);
+    assert(argc > 1);
     
     //loading the batch
     //path to the cpic directory
@@ -11,17 +11,11 @@ void cpu_gpu_comparison(int argc, char * argv[]){
     load_cpic(cpic_path, pic);
     
     //loading the kernel
-    const string cvit_path = argv[2]; //models/vit_1.cvit
+    const string cvit_path = "models/vit_1.cvit";
     VisionTransformer vit;
     cout << "loading vit" << endl;
     load_cvit(cvit_path, vit);
     vit.print();
-    
-    VisionTransformer vit2;
-    cout << "loading vit 2" << endl;
-    load_cvit("./models/vit_2.cvit", vit2);
-    cout << " -- VIT 2 --" << endl;
-    vit2.print();
 
     PredictionBatch pb;
     vit.forward(pic, pb);
@@ -48,12 +42,13 @@ void cpu_gpu_comparison(int argc, char * argv[]){
     int num_classes = vit.get_num_classes();
     int depth       = vit.get_depth();
     int num_heads   = (vit.get_blocks())[0].attention.num_heads;
-    int scale_val   = 1.0f; //TO UPDATE
-    int mlp_hidden = vit.get_blocks_shape()[0].mlperc_shape.fc1_shape.a_row;
+    float scale_val   = 1.0f; //VisionTransformer(C reference) default and only option for now
+    float epsilon     = 1e-6; 
+    int mlp_hidden  = vit.get_blocks_shape()[0].mlperc_shape.fc1_shape.a_row;
     /*Bool flags for the descriptors and buffers allocation*/
     bool init_pe_descriptors            = false; 
     bool allocate_pe_shared_ptrs        = false; 
-    bool block_mlp_kernel_type          = true;
+    bool block_mlp_kernel_type          = true; //Using fused kernel
     bool allocate_blocks_shared_ptrs    = false; 
 
     cudaStream_t stream;
@@ -86,8 +81,11 @@ void cpu_gpu_comparison(int argc, char * argv[]){
 
     GpuVit gpu_vit(
         stream, cudnn_handle, cublas_handle,
-        conv_dim, tokens, 
-        num_classes, depth, num_heads, scale_val, mlp_hidden,
+        conv_dim,
+        tokens, num_classes,
+        depth, num_heads, scale_val,
+        epsilon, epsilon,
+        mlp_hidden,
         init_pe_descriptors, 
         allocate_pe_shared_ptrs, 
         block_mlp_kernel_type, 

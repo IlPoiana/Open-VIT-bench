@@ -111,4 +111,3 @@ void linear_layer(
     void * d_y, bool gelu = true
 );
 
-void cuBLAS_test(cublasLtHandle_t & handle, cudaStream_t & stream);

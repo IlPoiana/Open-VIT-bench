@@ -34,12 +34,6 @@ __device__ void dev_block_layer_norm(
     half epsilon
 );
 
-__device__ void cub_dev_block_ln(
-    u_int idx,u_int global_idx,               // N = B*T (flattened), C = channels
-    half * x_data, half * out,      //All device pointers
-    half * scale, half * bias,
-    half epsilon
-);
 
 /*
 HOST KERNELS
@@ -74,19 +68,19 @@ __global__ void cub_layer_norm(
 __global__ void cub_single_layer_norm(
     half * x_data, half * out,     // device pointers
     half * scale, half * bias,      // device pointers
-    half epsilon, 
+    float epsilon, 
     u_int tokens_per_block
 );
 
 __global__ void multi_elem_cub_ln(
     half * x_data, half * y_data,     
     half * scale, half * bias,      //All device pointers
-    half epsilon,
+    float epsilon,
     u_int tokens_per_block
 );
 
 __global__ void unrolled_multi_elem_cub_ln(
     half * x_data, half * y_data,    
     half * scale, half * bias,      //All device pointers
-    half epsilon
+    float epsilon
 );

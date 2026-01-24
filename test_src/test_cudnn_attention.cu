@@ -6,24 +6,31 @@
 #include <cstdio>
 #include <cassert>
 
-double compare_results(Tensor &y, half * gpu_y){
-    u_int B = y.get_B(),T = y.get_N(),C = y.get_C();
+float compare_results(Tensor &y, half * gpu_y){
+    float tolerance = 1e-3f;
     double avg = 0;
-    for(u_int b = 0; b < B; b++){
-        for(u_int t = 0; t < T; t++){
-            for(u_int c = 0; c < C; c++){
+    float gpu_val;
+    float total_elem_num = y.get_B() * y.get_N() * y.get_C();
+    for(u_int b = 0; b < y.get_B(); b++){
+        for(u_int t = 0; t < y.get_N(); t++){
+            for(u_int c = 0; c < y.get_C(); c++){
                 assert(!isnanf( y.at(b,t,c)));
-                assert(!isnanf( __half2float(gpu_y[c + C * t + C * T * b])));
-                avg += (double)abs(y.at(b,t,c) - __half2float(gpu_y[c + C * t + C * T * b]));
-                
+                assert(!isnanf( __half2float(gpu_y[c + y.get_C() * t + y.get_C() * y.get_N() * b])));
+                gpu_val = __half2float(gpu_y[c + y.get_C() * t + y.get_C() * y.get_N() * b]);
+                avg += 
+                    (
+                        (double)abs(y.at(b,t,c) - gpu_val)
+                        /
+                        (double)max(abs(y.at(b,t,c)), tolerance)
+                    )
+                    / total_elem_num;
             }
         }
     }
-    return avg / (double(B) * T * C);
+    return float(avg);
 }
 
 void vector_f32_to_f16(float* in,vector<__half> &out, size_t dim){
-
     for (size_t i = 0; i < dim; ++i) {
         out.push_back(__float2half_rn(in[i]));   // host-available intrinsic
     }
@@ -43,7 +50,7 @@ To see how cuDNN attention scale on a real problem
 */
 void cpu_gpu_comparison(){
 
-    u_int B = 16, T = 196,C = 768, K = 768;
+    u_int B = 4, T = 196,C = 768, K = 768;
     cout << "Tensor: [" << B << ","<< T << "," << C << "]" << endl;    
     cout << "Output Tensor: [" << B << ","<< T << "," << K << "]" << endl;
 
@@ -161,18 +168,18 @@ void cpu_gpu_comparison(){
     attn.move_qkv_gen(q_gen, k_gen, v_gen);
     attn.move_proj(proj);
 
-    Tensor x(x_data,input_elements_number,B,T,C);
-    Tensor y(B,T,C);
+    Tensor x(x_data, input_elements_number, B, T, C);
+    Tensor y;
     attn.forward(x, y);
     cout << "computing the differences" << endl;
-    cout << "avg. difference CPU/cuDNN GPU: "  << compare_results(y, host_out) << endl;
+    cout << "avg. difference CPU/cuDNN GPU: "  << compare_results(y, host_out) * 100<< "%" << endl;
 
     // -Cleanup
     free(q_data); free(k_data); free(v_data); free(p_data);
-    free(x_data);
     free(qb_data); free(kb_data); free(vb_data); free(pb_data);
-    free(q_data_t); free(k_data_t); free(v_data_t); free(p_data_t);
+    free(x_data); free(q_data_t); free(k_data_t); free(v_data_t); free(p_data_t);
     free(host_out);
+
 }
 
 int main(){

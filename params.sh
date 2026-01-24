@@ -1,7 +1,7 @@
 # Dataset parameters
-export DTASET_DIM="8"
-export DTASET_MIN_B="1"
-export DTASET_MAX_B="1"
+export DTASET_DIM="2"
+export DTASET_MIN_B="4"
+export DTASET_MAX_B="4"
 export DTASET_C="3"
 export DTASET_H="224"
 export DTASET_W="224"

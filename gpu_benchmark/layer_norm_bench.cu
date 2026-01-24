@@ -224,8 +224,8 @@ int main(int argc, char** argv)
 
     cout << "LayerNorm Benchmark\n"
               << " batch_size:          " << batch << "\n"
-              << " tokens_per_block:    " << (kernel_id == 5 ? TOKENS_PER_BLOCK : tokens_per_block) << "\n"
-              << " elements_per_thread: " << ELEMENTS_PER_TH << "\n"
+              << " tokens:              " << tokens << "\n"
+              << " embeddings:          " << EMBEDDINGS_SIZE << "\n"
               << " warmup_iters:        " << WARM_UP << "\n"
               << " timed_iters:         " << N << "\n";
 

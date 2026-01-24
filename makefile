@@ -50,8 +50,8 @@ CUDNN_FLAGS := -lcuda -lcudnn
 
 # GPU COMPILE FLAGS FOR HYPERPARAMS SELECTION
 # LAYER NORM
-TOKENS_PER_BLOCK := 4
-ELEMENTS_PER_TH := 4
+TOKENS_PER_BLOCK := 2
+ELEMENTS_PER_TH := 8
 # WORKSPACE SIZE
 MULTI_STREAM_WORKSPACE = 0
 WORKSPACE_FLAG := -DWORKSPACE_FLAG=$(MULTI_STREAM_WORKSPACE)
@@ -129,7 +129,6 @@ $(OMP_OBJ_FOLDER)/vision_transformer.o \
 $(OBJ_FOLDER)/utils.o \
 $(OBJ_FOLDER)/main.o
 	$(CC) $(CFLAGS) $(OMPFLAGS) $^ -o $@
-
 
 
 # Test OBJs
@@ -239,16 +238,19 @@ obj/cudnn_backend_conv:
 	nvcc -std=c++17 test_src/cuDNN_explained.cu -lcudnn -lcuda -o obj/cudnn_backend_conv
 
 
-$(TEST_OBJ_FOLDER)/test_gpu_mlp.o \
-$(TEST_OBJ_FOLDER)/test_gpu_layer.o \
 $(TEST_OBJ_FOLDER)/test_cudnn_attention.o \
 $(TEST_OBJ_FOLDER)/test_cudnn_conv2d.o \
-$(TEST_OBJ_FOLDER)/test_gpu_block.o \
 $(TEST_OBJ_FOLDER)/test_gpu_patch_embed.o \
+: $(TEST_OBJ_FOLDER)/%.o: $(TEST_SRC_FOLDER)/%.cu
+	nvcc -c $(CUDA_FLAGS) $< -o $@
+
+$(TEST_OBJ_FOLDER)/test_gpu_layer.o \
+$(TEST_OBJ_FOLDER)/test_gpu_mlp.o \
+$(TEST_OBJ_FOLDER)/test_gpu_block.o \
 $(TEST_OBJ_FOLDER)/test_gpu_pred_head.o \
 $(TEST_OBJ_FOLDER)/test_gpu_vit.o \
 : $(TEST_OBJ_FOLDER)/%.o: $(TEST_SRC_FOLDER)/%.cu
-	nvcc -c $(CUDA_FLAGS) $< -o $@
+	nvcc -c $(CUDA_FLAGS) $(WORKSPACE_FLAG) -DTOKENS_PER_BLOCK=$(TOKENS_PER_BLOCK) -DELEMENTS_PER_TH=$(ELEMENTS_PER_TH) $< -o $@
 
 # CUDNN single components
 

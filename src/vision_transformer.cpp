@@ -80,16 +80,6 @@ VisionTransformer::VisionTransformer(
     num_prefix_tokens += _num_reg_tokens;
     no_embed_class = _no_embed_class;
 
-    // init cls_token and reg_token at zeroes, with dim:
-    // 1 x 1 x _embed_dim if _class_token
-    // 1 x _reg_tokens x _embed_dim if _reg_tokens > 0
-
-    // vit_size num_patches = patch_embed.get_num_patches();
-    //vit_size embed_len = no_embed_class==true ? num_patches : num_patches + num_prefix_tokens;
-    // init pos_embed and at random, with dim:
-    // 1 x embed_len x _embed_dim if _class_token
-    // scaled by 0.02
-
     use_pos_embed = _use_pos_embed;
     use_pre_norm = _use_pre_norm;
     use_fc_norm = _use_fc_norm;
@@ -196,8 +186,6 @@ void VisionTransformer::get_kernel_shape(int kernel_shape[6]){
 layer_data VisionTransformer::get_patch_layer_norm(){
     std::cout << patch_embed.get_layer_g()[0] << std::endl;
     std::cout << patch_embed.get_layer_bias()[0] << std::endl;
-    // patch_embed.get_layer_eps(),
-    // patch_embed.get_use_bias()
     layer_data data(
         patch_embed.get_layer_g(),
         patch_embed.get_layer_bias(),
@@ -660,16 +648,10 @@ void VisionTransformer::forward_features(const PictureBatch& p_in, Tensor& x_out
 
     for (int i=0;i<depth;++i) {
         blocks.at(i).forward(x_out,x_out);
-        // if(i == 0){
-        //     // printf("first encoder block\n");
-        //     x_out.print();
-        // }
     }
-    // printf("After encoding blocks\n"); x_out.print();
     if (use_fc_norm == false) {
         norm(x_out);
     }
-    // printf("After ph layer norm\n"); x_out.print();
 }
 
 void VisionTransformer::pool(const Tensor& x_in, Tensor& x_out) const {
@@ -793,8 +775,7 @@ void VisionTransformer::print(){
     int pos_shape[2];
     get_pos_embed_shape(pos_shape);
     cout << "[" <<pos_shape[0] << "," << pos_shape[1] << "]" << endl;
-    // Matrix pos_emb(vit.get_pos_embed(), pos_shape[0] * pos_shape[1],pos_shape[0], pos_shape[1]);
-    // pos_emb.print();
+
 
     cout << "\n-- Blocks --" << endl;
     u_int depth = get_blocks_number();
@@ -811,18 +792,6 @@ void VisionTransformer::print(){
     cout << " block layer scale 1: " << blocks[0].ls1.val << endl;
     cout << " block layer scale 2: " << blocks[0].ls2.val << endl;
 
-    // linear_data blk0_attn_k = blocks[0].attention.k_gen;
-    // Matrix host_k(blk0_attn_k.A, blk0_attn_k.in_features * blk0_attn_k.out_features, blk0_attn_k.in_features, blk0_attn_k.out_features);
-    // cout << "block 0 k attention matrix: "; host_k.print();
-
-    // for(u_int idx = 0; idx < block_s.size(); idx++){
-    //     cout << idx <<" block k_gen_shape: col " << block_s[idx].attention_shape.k_gen_shape.a_col <<
-    //     " row: " <<  block_s[idx].attention_shape.k_gen_shape.a_row << endl;
-    //     cout << idx <<" block attention dim: " << blocks[idx].attention.dim << endl;
-    //     cout << idx <<" block attention projections bias: " << truefalse(blocks[idx].attention.proj.use_bias) << endl;
-    //     cout << idx <<" block attention use layer norm: " << truefalse(blocks[idx].attention.use_qk_norm) << endl;
-    //     cout << idx <<" block layer norm shape: " << block_s[idx].norm1_shape.g_size << "- bias -" <<block_s[idx].norm1_shape.bias_size <<endl<<endl;
-    // }
 
     if(get_use_pre_norm()){
         layer_shape pre_norm_s = get_pre_norm_shape();

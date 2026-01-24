@@ -109,15 +109,15 @@ void initialize_attn_descriptors(
 );
 
 void cudnn_attention(
-    mtx q_host,
-    mtx k_host,
-    mtx v_host,
-    mtx p_host,
-    h_tensor x_host,
-    vector<__half> qb_data,
-    vector<__half> kb_data,
-    vector<__half> vb_data,
-    vector<__half> pb_data,
+    mtx &q_host,
+    mtx &k_host,
+    mtx &v_host,
+    mtx &p_host,
+    h_tensor &x_host,
+    vector<__half> &qb_data,
+    vector<__half> &kb_data,
+    vector<__half> &vb_data,
+    vector<__half> &pb_data,
     half * host_out
 );
 

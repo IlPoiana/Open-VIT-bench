@@ -3,9 +3,11 @@ ELEMENTS_PER_TH=(8)
 # ELEMENTS_PER_TH=(1 2 4 8 16 32 64)
 STRIDE=(4)
 BLOCK_DIM=(256 512)
+BLOCK_DIM=(512)
+
 
 BATCHES=(2 4 8 16 32 64 128 256 512 1024 2048)
-# BATCHES=(1 2 4 8)
+BATCHES=(2 8 128)
 
 mkdir -p gpu_out/prediction_head_bench
 for tok in "${TOKENS_PER_BLOCK[@]}"; do

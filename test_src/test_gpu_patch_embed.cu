@@ -120,7 +120,7 @@ Tensor cpu_baseline(
 }
 
 void cpu_gpu_comparison(bool debug){
-    u_int batch = 64, channels = 3, height = 224, width = 224;
+    u_int batch = 8, channels = 3, height = 224, width = 224;
     u_int Ho = 16, Wo = 16, embeddings = 768;
     if(debug){
         batch = 8; channels = 3; height = 16; width = 16;
@@ -200,7 +200,7 @@ void cpu_gpu_comparison(bool debug){
         Tensor gpu_debug(h_out, embedded_elements_num, batch, tokens + 1, embeddings);
         gpu_debug.print();
     }
-    cout << " Comparison CPU/GPU: " << compare_results(y_cpu, gpu_out) << endl;
+    cout << " Comparison CPU/GPU: " << compare_results(y_cpu, gpu_out) * 100 << "%" << endl;
 
     // -- GPU Multi Stream --
 

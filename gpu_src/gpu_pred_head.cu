@@ -331,12 +331,13 @@ void GpuPredictionHead::forward(bool debug){
     if(debug) tokens_per_block = 1;
 
     /*layer norm*/
+    ln_block_dim = EMBEDDINGS_SIZE;
     ln_blocks_num = (input_elements_number / (ln_block_dim * tokens_per_block));
     assert(input_elements_number % (ln_block_dim * tokens_per_block) == 0);
     cub_single_layer_norm<<<ln_blocks_num, ln_block_dim, 0, stream>>>(
         (half*)d_x, (half*)d_x,
         (half*)d_ln_scale, (half*)d_ln_bias,
-        __double2half(epsilon),
+        epsilon,
         tokens_per_block
     );
     if(debug){

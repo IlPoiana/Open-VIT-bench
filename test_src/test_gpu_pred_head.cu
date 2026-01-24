@@ -11,12 +11,12 @@ void compare_results(PredictionBatch &cpu_pb, half * gpu_pred, int * class_predi
     u_int batch = cpu_pb.get_B(), class_num = cpu_pb.get_CLS();
     vector<float> probabilities_array(batch * class_num);
     double avg = 0; int class_correctly_classified = 0;
-
+    double tolerance = 1e-3;
     if(show_predictions){
         cout << "cpu predictions:" << endl;
         for(int i = 0; i < batch; i++){
             std::cout << "   B[" << i << "]: class " << cpu_pb.get_prediction_class(i) << ", prob ";
-            printf("%7.3f\n", cpu_pb.get_prediction_class_probability(i));
+            printf("%7.4f\n", cpu_pb.get_prediction_class_probability(i));
         }
     }
     
@@ -32,19 +32,23 @@ void compare_results(PredictionBatch &cpu_pb, half * gpu_pred, int * class_predi
             cout << "wrong gpu class: "<< cpu_pb.get_prediction_class(i) << " - " << class_prediction[i] << endl;
             tmp.print();
         }
-        avg += abs(probabilities_array[i *class_num + class_prediction[i]] - cpu_pb.get_prediction_class_probability(i)); 
+
+        avg += 
+            abs((double)probabilities_array[i *class_num + class_prediction[i]] - cpu_pb.get_prediction_class_probability(i))
+            /
+            max(abs((double)cpu_pb.get_prediction_class_probability(i)), tolerance); 
     }
     cout << "gpu class prediction accuracy(cpu reference): " << ((float)class_correctly_classified / batch) * 100.0f << "%" << endl;
-    cout << "average difference between cpu/GPU probabilities: " << avg / batch << endl;
+    cout << "average difference between cpu/GPU probabilities: " << (avg / batch) * 100 << "%" << endl;
 
     
 }
 
 void cpu_gpu_comparison(bool debug){
-    u_int batch = 256, tokens = 197, embeddings = 768, class_num = 100;
-    u_long seed = 0;
+    // Ph layer norm needs embeddings to be equal to EMBEDDINGS_SIZE. 768 in this case
+    u_int batch = 32, tokens = 197, embeddings = 768, class_num = 100;
     if(debug){
-        batch = 2; tokens = 16; embeddings = 16; class_num = 8;  
+        batch = 3; tokens = 16; embeddings = 768; class_num = 8;  
     }
     cout << "Input tensor:\n"
     << "[" << batch << ","<< tokens << ","<< embeddings << "]" << endl;
@@ -65,24 +69,25 @@ void cpu_gpu_comparison(bool debug){
     h_lin_bias = (float *)malloc(sizeof(float) * class_num);
     og_h_x     = (float *)malloc(sizeof(float) * input_elements_number);
 
-    rand_init(h_x, input_elements_number, 0.1f,new_seed());
-    rand_init(h_ln_scale, embeddings, 0.1f,new_seed());
-    rand_init(h_ln_bias, embeddings, 0.1f,new_seed());
-    rand_init(h_lin_w, embeddings * class_num, 0.1f,new_seed());
-    rand_init(h_lin_bias, class_num, 0.1f,new_seed());
-    
+    rand_init(h_x, input_elements_number, 1.0f, new_seed());
+    rand_init(h_ln_scale, embeddings, 0.1f, new_seed());
+    rand_init(h_ln_bias, embeddings, 0.1f, new_seed());
+    rand_init(h_lin_w, embeddings * class_num, 0.1f, new_seed());
+    rand_init(h_lin_bias, class_num, 0.1f, new_seed());
+
 
     half * gpu_x, * gpu_ln_scale, * gpu_ln_bias, * gpu_lin_w, * gpu_lin_bias;
-    gpu_x = (half *)malloc(sizeof(half) * input_elements_number);
-    gpu_ln_scale = (half *)malloc(sizeof(half) * embeddings);
-    gpu_ln_bias  = (half *)malloc(sizeof(half) * embeddings);
-    gpu_lin_w    = (half *)malloc(sizeof(half) * embeddings * class_num);
-    gpu_lin_bias = (half *)malloc(sizeof(half) * class_num);
-    f32_to_f16(h_x,gpu_x,input_elements_number);
+    gpu_x =         (half *)malloc(sizeof(half) * input_elements_number);
+    gpu_ln_scale =  (half *)malloc(sizeof(half) * embeddings);
+    gpu_ln_bias  =  (half *)malloc(sizeof(half) * embeddings);
+    gpu_lin_w    =  (half *)malloc(sizeof(half) * embeddings * class_num);
+    gpu_lin_bias =  (half *)malloc(sizeof(half) * class_num);
+    
+    f32_to_f16(h_x, gpu_x, input_elements_number);
     f32_to_f16(h_ln_scale, gpu_ln_scale, embeddings);
     f32_to_f16(h_ln_bias, gpu_ln_bias, embeddings);
     f32_to_f16(h_lin_w, gpu_lin_w, embeddings * class_num);
-    f32_to_f16(h_lin_bias,gpu_lin_bias, class_num);
+    f32_to_f16(h_lin_bias, gpu_lin_bias, class_num);
     for(int i = 0; i< input_elements_number; i++) {og_h_x[i] = h_x[i];}    
 
     void * d_x, * d_t, * d_y, * d_pred,* d_ln_scale, * d_ln_bias, * d_lin_w, * d_lin_bias;
@@ -168,8 +173,9 @@ void cpu_gpu_comparison(bool debug){
     gpu_ph.set_shared_buffers(d_x, d_t, d_y, d_pred, d_workspace);
     gpu_ph.set_shared_weights(d_ln_scale, d_ln_bias, d_lin_w, d_lin_bias);
     
-    gpu_ph.tokens_per_block = debug ? 1 : 32;
-    gpu_ph.stride_val = debug ? 1 : 32;
+    gpu_ph.tokens_per_block = debug ? 1 : 4;
+    gpu_ph.stride_val = debug ? 1 : 16;
+    gpu_ph.epsilon = epsilon;
 
     gpu_ph.forward(debug);
     gpu_ph.compute_predictions();
@@ -183,7 +189,7 @@ void cpu_gpu_comparison(bool debug){
     cout << "gpu class" << endl; 
     CUDA_CHECK(cudaMemcpyAsync(gpu_x, gpu_ph.d_pred, sizeof(half) * batch * class_num, cudaMemcpyDeviceToHost));
     cudaStreamSynchronize(stream);
-    compare_results(pb, gpu_x, gpu_ph.class_prediction);
+    compare_results(pb, gpu_x, gpu_ph.class_prediction, debug);
 
     // -- Cleanup
     free(h_x); free(h_ln_scale); free(h_ln_bias); free(h_lin_w); free(h_lin_bias); free(og_h_x);

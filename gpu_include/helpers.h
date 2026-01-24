@@ -40,17 +40,6 @@ div_up(int64_t x, int64_t y) {
                     }                                                                                                     \
     }
                     
-                    // FAIL(err_msg.str()); 
-
-// #define CUDNN_CHECK(status)                                                                                     \
-//     {                                                                                                           \
-//         cudnnStatus_t err = status;                                                                             \
-//         if (err != CUDNN_STATUS_SUCCESS) {                                                                      \
-//             std::stringstream err_msg;                                                                          \
-//             err_msg << "cuDNN Error: " << cudnnGetErrorString(err) << " (" << err << ") at " << __FILE__ << ":" \
-//                     << __LINE__;                                                                                \
-//                 }                                                                                                       \
-//     }
 
 #define CUDNN_CHECK(status)                                                                                     \
     {                                                                                                           \
@@ -63,7 +52,6 @@ div_up(int64_t x, int64_t y) {
     }
  
             
-            // FAIL(err_msg.str());                                                                                
 // Custom deleter for cudnnHandle_t
 struct CudnnHandleDeleter {
     void

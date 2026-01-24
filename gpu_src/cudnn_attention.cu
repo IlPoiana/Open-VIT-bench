@@ -118,10 +118,6 @@ void initialize_attn_descriptors(
         CUDNN_CHECK(cudnnGetMultiHeadAttnBuffers(handle, descriptors.attn, &descriptors.weightBytes, &descriptors.workBytes, /*reserveSpaceSize=*/nullptr)); // :contentReference[oaicite:4]{index=4}
         if (descriptors.weightBytes > 0) CUDA_CHECK(cudaMalloc(&descriptors.dWeights, descriptors.weightBytes));
         if (descriptors.workBytes > 0)  CUDA_CHECK(cudaMalloc(&descriptors.dWork, descriptors.workBytes));
-        /*TO REMOVE*/
-        cout << "descriptors.workBytes " << descriptors.workBytes << endl;
-        //----
-        
 
         //7) Allocate weight array and set the projection descriptors
         auto fill_proj_identity = [&](cudnnMultiHeadAttnWeightKind_t kind, half * host_data, size_t device_size){
@@ -436,7 +432,6 @@ void attention_device(
     };
     
     if(qkv_projSize != 0){
-        cout<< "qk projections" << endl;
         fill_proj_identity(CUDNN_MH_ATTN_Q_WEIGHTS, weights.d_q, emb_dim * emb_dim);
         fill_proj_identity(CUDNN_MH_ATTN_K_WEIGHTS, weights.d_k,emb_dim * emb_dim);
         fill_proj_identity(CUDNN_MH_ATTN_V_WEIGHTS, weights.d_v,emb_dim * emb_dim);
@@ -447,7 +442,6 @@ void attention_device(
         
     }
     if(o_projSize != 0){
-        cout << "ov projections" << endl;
         fill_proj_identity(CUDNN_MH_ATTN_O_WEIGHTS, weights.d_o, emb_dim * emb_dim); 
         fill_proj_identity(CUDNN_MH_ATTN_O_BIASES, weights.d_ob, emb_dim);
 
@@ -473,15 +467,15 @@ void attention_device(
 
 
 void cudnn_attention(
-    mtx q_host,
-    mtx k_host,
-    mtx v_host,
-    mtx p_host,
-    h_tensor x_host,
-    vector<__half> qb_data,
-    vector<__half> kb_data,
-    vector<__half> vb_data,
-    vector<__half> pb_data,
+    mtx &q_host,
+    mtx &k_host,
+    mtx &v_host,
+    mtx &p_host,
+    h_tensor &x_host,
+    vector<__half> &qb_data,
+    vector<__half> &kb_data,
+    vector<__half> &vb_data,
+    vector<__half> &pb_data,
     half * host_out
 ){
     //Variable definition
@@ -498,12 +492,6 @@ void cudnn_attention(
     assert(vb_data.size() > 0);
     assert(pb_data.size() > 0);
 
-    cout << __half2float( qb_data.at(0)) << endl;
-    cout << __half2float( kb_data.at(0)) << endl;
-    cout << __half2float( vb_data.at(0)) << endl;
-    cout << __half2float( pb_data.at(0)) << endl;
-
-    cout<< "first elem: "<< __half2float(x_host.data[0]) << endl;
     const int qkv_projSize = x_host.W / NUM_HEADS; //should be the size of projection (so MHA like 3)
     const int o_projSize = qkv_projSize * NUM_HEADS;
 
@@ -630,7 +618,6 @@ void cudnn_attention(
     };
     
     if(qkv_projSize != 0){
-        cout<< "qk projections" << endl;
         fill_proj_identity(CUDNN_MH_ATTN_Q_WEIGHTS, q_host.data, q_host.col_n * q_host.row_n);
         fill_proj_identity(CUDNN_MH_ATTN_K_WEIGHTS, k_host.data, k_host.col_n * k_host.row_n);
         fill_proj_identity(CUDNN_MH_ATTN_V_WEIGHTS, v_host.data, v_host.col_n * v_host.row_n);
@@ -641,7 +628,6 @@ void cudnn_attention(
         
     }
     if(o_projSize != 0){
-        cout << "ov projections" << endl;
         fill_proj_identity(CUDNN_MH_ATTN_O_WEIGHTS, p_host.data, p_host.col_n * p_host.row_n);
         fill_proj_identity(CUDNN_MH_ATTN_O_BIASES, pb_data.data(), pb_data.size());
 
@@ -664,8 +650,25 @@ void cudnn_attention(
         /*reserveSpaceSizeInBytes*/ 0,   // inference path
         /*reserveSpace*/ nullptr)); 
     
+    
+
     CUDA_CHECK(cudaDeviceSynchronize());
     CUDA_CHECK(cudaMemcpy(host_out, dO, input_size * sizeof(half), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaFree(dWeights));
     CUDA_CHECK(cudaFree(dWork));
+    CUDA_CHECK(cudaFree(dQ));
+    CUDA_CHECK(cudaFree(dK));
+    CUDA_CHECK(cudaFree(dV));
+    CUDA_CHECK(cudaFree(dO));
+    CUDA_CHECK(cudaFree(states));
+    CUDA_CHECK(cudaFree(dLenQO));
+    CUDA_CHECK(cudaFree(dLenKV));
+    CUDNN_CHECK(cudnnDestroySeqDataDescriptor(qDesc));
+    CUDNN_CHECK(cudnnDestroySeqDataDescriptor(kDesc));
+    CUDNN_CHECK(cudnnDestroySeqDataDescriptor(vDesc));
+    CUDNN_CHECK(cudnnDestroySeqDataDescriptor(oDesc));
+    CUDNN_CHECK(cudnnDestroyAttnDescriptor(attention_descriptor));
+    CUDNN_CHECK(cudnnDestroyDropoutDescriptor(attnDrop));
+    CUDNN_CHECK(cudnnDestroyDropoutDescriptor(postDrop));
+    CUDNN_CHECK(cudnnDestroy(handle));
 }

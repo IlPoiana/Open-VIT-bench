@@ -26,9 +26,6 @@ struct benchmark_time {
 
 int get_arg(int argc, char** argv, const char* name, int default_val);
 
-bool has_flag(int argc, char** argv, const char* flag);
-
-
 float time_kernel(
     int warmup,
     int iters,

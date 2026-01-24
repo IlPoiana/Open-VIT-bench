@@ -5,7 +5,120 @@
 
 using namespace std;
 // ----
-#include <cstddef>
+
+// Simple error-check helpers
+#define CHECK_CUDA(call) do {                                  \
+    cudaError_t e = (call);                                    \
+    if (e != cudaSuccess) {                                    \
+        fprintf(stderr, "CUDA error %s:%d: %s\n",              \
+                __FILE__, __LINE__, cudaGetErrorString(e));    \
+    }                                                          \
+} while(0)
+
+#define CHECK_CUBLASLT(call) do {                              \
+    cublasStatus_t s = (call);                                 \
+    if (s != CUBLAS_STATUS_SUCCESS) {                          \
+        fprintf(stderr, "cuBLASLt error %s:%d: %d\n",          \
+                __FILE__, __LINE__, (int)s);                   \
+    }                                                          \
+} while(0)
+
+// Helper to print cudaDataType_t
+const char* cudaDataTypeToStr(cudaDataType_t t) {
+    switch (t) {
+    case CUDA_R_32F: return "CUDA_R_32F";
+    case CUDA_R_64F: return "CUDA_R_64F";
+    case CUDA_R_16F: return "CUDA_R_16F";
+    case CUDA_R_8I:  return "CUDA_R_8I";
+    case CUDA_R_8U:  return "CUDA_R_8U";
+    case CUDA_C_32F: return "CUDA_C_32F";
+    case CUDA_C_64F: return "CUDA_C_64F";
+    case CUDA_C_16F: return "CUDA_C_16F";
+    default: return "UNKNOWN";
+    }
+}
+
+void print_layout_attributes(cublasLtMatrixLayout_t layout) {
+    cublasStatus_t status;
+    size_t got = 0;
+
+    // Data type
+    cudaDataType_t dtype;
+    status = cublasLtMatrixLayoutGetAttribute(layout,
+                                              CUBLASLT_MATRIX_LAYOUT_TYPE,
+                                              &dtype, sizeof(dtype),
+                                              &got);
+    if (status == CUBLAS_STATUS_SUCCESS) {
+        printf("TYPE: %s\n", cudaDataTypeToStr(dtype));
+    } else {
+        printf("TYPE: <not available> (status=%d)\n", (int)status);
+    }
+
+    // Rows
+    int rows = 0;
+    status = cublasLtMatrixLayoutGetAttribute(layout,
+                                              CUBLASLT_MATRIX_LAYOUT_ROWS,
+                                              &rows, sizeof(rows),
+                                              &got);
+    if (status == CUBLAS_STATUS_SUCCESS) {
+        printf("ROWS: %d\n", rows);
+    } else {
+        printf("ROWS: <not available> (status=%d)\n", (int)status);
+    }
+
+    // Cols
+    int cols = 0;
+    status = cublasLtMatrixLayoutGetAttribute(layout,
+                                              CUBLASLT_MATRIX_LAYOUT_COLS,
+                                              &cols, sizeof(cols),
+                                              &got);
+    if (status == CUBLAS_STATUS_SUCCESS) {
+        printf("COLS: %d\n", cols);
+    } else {
+        printf("COLS: <not available> (status=%d)\n", (int)status);
+    }
+
+    // Batch count
+    int batchCount = 0;
+    status = cublasLtMatrixLayoutGetAttribute(layout,
+                                              CUBLASLT_MATRIX_LAYOUT_BATCH_COUNT,
+                                              &batchCount, sizeof(batchCount),
+                                              &got);
+    if (status == CUBLAS_STATUS_SUCCESS) {
+        printf("BATCH_COUNT: %d\n", batchCount);
+    } else {
+        printf("BATCH_COUNT: <not available> (status=%d)\n", (int)status);
+    }
+
+    // Strided batch offset (may be 64-bit)
+    int64_t stride = 0;
+    status = cublasLtMatrixLayoutGetAttribute(layout,
+                                              CUBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET,
+                                              &stride, sizeof(stride),
+                                              &got);
+    if (status == CUBLAS_STATUS_SUCCESS) {
+        printf("STRIDED_BATCH_OFFSET: %" PRId64 "\n", stride);
+    } else {
+        printf("STRIDED_BATCH_OFFSET: <not available> (status=%d)\n", (int)status);
+    }
+
+    // Order: depending on cuBLASLt version this might be an enum; try to fetch as int
+    int order = 0;
+    status = cublasLtMatrixLayoutGetAttribute(layout,
+                                              CUBLASLT_MATRIX_LAYOUT_ORDER,
+                                              &order, sizeof(order),
+                                              &got);
+    if (status == CUBLAS_STATUS_SUCCESS) {
+        printf("ORDER (numeric): %d\n", order);
+    } else {
+        printf("ORDER: <not available> (status=%d)\n", (int)status);
+    }
+
+    // TILE or other implementation-specific attributes can be queried similarly:
+    // e.g. CUBLASLT_MATRIX_LAYOUT_TILE, CUBLASLT_MATRIX_LAYOUT_ALIGNMENT, etc.
+}
+
+//----
 
 // from A: MxN (row-major) to B: NxM (row-major)
 template <class T>
@@ -70,7 +183,7 @@ void cpu_gpu_comparison(bool debug = false){
 
     random_device rd;          
     mt19937 gen(rd());         
-    uniform_real_distribution<float> dist(-1.0f, 1.0f);
+    uniform_real_distribution<float> dist(-0.1f, 0.1f);
 
     size_t loop_range = max({input_elements_number, K * C, K * M});
     for(size_t i = 0; i < loop_range; i++){
@@ -98,8 +211,10 @@ void cpu_gpu_comparison(bool debug = false){
     * d_y;
     
     h_tensor x_gpu(x_data,B,C,1,T);
-    mtx b1_gpu(b1_data,1,K); mtx b1_gpu_mtx(K, B*T); bias_matrix(b1_gpu.data, b1_gpu_mtx.data, K, B*T);
-    mtx b2_gpu(b2_data,1,M); mtx b2_gpu_mtx(M, B*T); bias_matrix(b2_gpu.data, b2_gpu_mtx.data, M, B*T);
+    mtx b1_gpu(b1_data,1,K);
+    mtx b2_gpu(b2_data,1,M);
+    vector<half> b1_gpu_mtx(K * B * T); bias_matrix(b1_gpu.data, b1_gpu_mtx.data(), K, B*T);
+    vector<half> b2_gpu_mtx(M * B * T); bias_matrix(b2_gpu.data, b2_gpu_mtx.data(), M, B*T);
     mtx fc1_gpu(A1_data,K,C);
     mtx fc2_gpu(A2_data,M,K);
     half * h_gpu = (half *)malloc(sizeof(half) * B * T * K);
@@ -116,7 +231,7 @@ void cpu_gpu_comparison(bool debug = false){
     CUDA_CHECK(cudaMemcpy(d_x, x_gpu.data, sizeof(half) *  input_elements_number, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_fc1, fc1_gpu.data, sizeof(half) * K *C, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_b1_data, b1_gpu.data, sizeof(half) * K, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_b1_mtx, b1_gpu_mtx.data, sizeof(half) * hidden_elements_number, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_b1_mtx, b1_gpu_mtx.data(), sizeof(half) * hidden_elements_number, cudaMemcpyHostToDevice));
 
     // -Second layer
     CUDA_CHECK(cudaMalloc(&d_fc2, sizeof(half) * M * K));
@@ -126,7 +241,7 @@ void cpu_gpu_comparison(bool debug = false){
     
     CUDA_CHECK(cudaMemcpy(d_fc2, fc2_gpu.data, sizeof(half) * M * K, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_b2_data, b2_gpu.data, sizeof(half) * M, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_b2_mtx, b2_gpu_mtx.data, sizeof(half) * output_elements_number, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_b2_mtx, b2_gpu_mtx.data(), sizeof(half) * output_elements_number, cudaMemcpyHostToDevice));
     
     // -Handle creation
     cublasLtHandle_t handle;CUBLAS_CHECK(cublasLtCreate(&handle));
@@ -178,17 +293,25 @@ void cpu_gpu_comparison(bool debug = false){
     // -Create descriptors for fused MLP
     cublasLt_matmul_desc matmul[2];
     cublasLtMatmulAlgo_t algo[2];
-    mlp_dimensions dim(B,T,C,K,M);
+    mlp_dimensions dim(B, T, C, K, M);
 
-    void * d_workspace; cudaMalloc(&d_workspace, (size_t) MLP_WORKSPACE_SIZE);
+    void *d_workspace = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_workspace, WORKSPACE_SIZE));
 
-    create_mlp_descriptors(handle, matmul, d_workspace, algo, dim);
-    
-    // -Execute the fused MLP
+    create_mlp_descriptors(
+        handle,
+        matmul,
+        d_workspace,
+        algo,
+        dim,
+        true
+    );
     fused_gpu_mlp(
-        handle, stream1,
-        matmul, algo, d_workspace,
-        d_x, d_fc1, d_h,d_b1_mtx, d_fc2,d_b2_mtx,d_y
+        handle,
+        stream1,
+        matmul, algo, 
+        d_workspace,
+        d_x, d_fc1, d_h, d_b1_mtx, d_fc2, d_b2_mtx, d_y
     );
 
     half * temp_gpu = (half *)malloc(sizeof(half) * output_elements_number);
@@ -228,7 +351,7 @@ void cpu_gpu_comparison(bool debug = false){
 }
 
 int main() {
-    bool debug = true;
+    bool debug = false;
     cpu_gpu_comparison(debug);
 
     return 0;
