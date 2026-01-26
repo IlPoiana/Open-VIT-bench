@@ -14,4 +14,4 @@ export CPRD_HIGH_THRESHOLD="0.0001" # equal to 0.01 %
 export CPRD_LOW_THRESHOLD="0.000001"
 
 # OMP threads parameter
-export THREAD_LIST=(1 2 4 8 16)
+export THREAD_LIST=(1 2)

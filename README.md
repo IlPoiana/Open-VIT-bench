@@ -190,6 +190,11 @@ pip install -r requirements.txt
 mkdir -p obj test_obj test_bin gpu_out
 ```
 
+2. Set the CUDNN env variable for disableing completely TensorCores
+```bash
+export NVIDIA_TF32_OVERRIDE=0
+```
+
 ## Repo Structure
 - *gpu_include:* this folder contains all the header files of all the gpu components and utility programs. Follows the same logic as the cpp section.
 - *gpu_src:* this folder contains all the source files with the C++ & CUDA implementations following the same logic as the cpp section.
@@ -274,7 +279,7 @@ Each `test_gpu_*` program generates a random input and weights sets, shares them
 
 Example
 ```bash
-make test_bin/test_gpu_layer.exe
+make test_bin/test_gpu_layer.exe #compile the file you want to test 
 test_bin/test_gpu_layer.exe
 ```
 
@@ -292,6 +297,7 @@ test_bin/test_gpu_vit.exe data/pic_1.cpic
 This benchmarks are designed for testing each component performance. 
 All the bechmarks are configurable by passing the corresponing flag to them. Check the respective file `main` source code under the `gpu_benchmark/` directory for all the possible parameters.
 
+It is required to compile each file through the make command before running it. Also don't forget to set the cudnn env variable for disableing tensor cores ops (how to do it [here](#setup)).  
 
 ```bash
 make test_bin/<component_name>_bench.exe --flag1 val1 --flag2 val2

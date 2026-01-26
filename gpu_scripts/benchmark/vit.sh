@@ -12,6 +12,7 @@ STREAMS_N=(2)
 KERNEL_START=2 
 KERNEL_END=5 
 
+export NVIDIA_TF32_OVERRIDE=0
 make clean 
 for (( k=KERNEL_START; k<=KERNEL_END; k++)); do
     mkdir -p gpu_out/vit_bench/$k

@@ -114,7 +114,7 @@ struct vit_time{
              << "Total time (CPU)                                    : " << total_time.avg_time << " +"<< total_time.variance<< " ms\n";
     }
 
-    void to_JSON(int streams_n, int batch_n, int minibatch_size, int batch_size, int params[]){
+    void to_JSON(int streams_n, int batch_n, int batch_size, int minibatch_size, int params[]){
         int transpose_stride    = params[0];
         int add_stride          = params[1];
 
@@ -310,7 +310,7 @@ vit_time full_vit_single_prediction(
 
             gpu_vit.ph.gpu_x += conv_dim.batch * CLASS_N;
         }
-        CUDA_CHECK(cudaStreamSynchronize(stream)); //Maybe substitute with a for stream sync? 
+        CUDA_CHECK(cudaStreamSynchronize(stream));  
         predictions.compute_predictions(gpu_predictions);
         gpu_pics_start = gpu_pics;
 

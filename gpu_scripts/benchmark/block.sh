@@ -1,11 +1,12 @@
 MLP_STRIDE=(4) #Fixed to one maybe two variables
 BLOCK_DIM=(256)
-TOKENS_PER_BLOCK=(2 4 8) #Keep only the good values from the tests
+TOKENS_PER_BLOCK=(4) #Keep only the good values from the tests
 ELEMENTS_PER_TH=(8) #Keep only the good values from the tests
 
 # BATCHES=(2 4 8 16 32 64 128 256 512 1024 2048)
-BATCHES=(64 256)
+BATCHES=(512)
 
+export NVIDIA_TF32_OVERRIDE=0
 mkdir -p gpu_out/block_bench
 for tok in "${TOKENS_PER_BLOCK[@]}"; do
     make clean_bench_block

@@ -1,4 +1,4 @@
-TOKENS_PER_BLOCK=(2 4) #keep only the best for the layer norm
+TOKENS_PER_BLOCK=(4) #keep only the best for the layer norm
 ELEMENTS_PER_TH=(8)
 # ELEMENTS_PER_TH=(1 2 4 8 16 32 64)
 STRIDE=(4)
@@ -7,8 +7,9 @@ BLOCK_DIM=(512)
 
 
 BATCHES=(2 4 8 16 32 64 128 256 512 1024 2048)
-BATCHES=(2 8 128)
+BATCHES=(512)
 
+export NVIDIA_TF32_OVERRIDE=0
 mkdir -p gpu_out/prediction_head_bench
 for tok in "${TOKENS_PER_BLOCK[@]}"; do
     make clean_bench_prediction_head

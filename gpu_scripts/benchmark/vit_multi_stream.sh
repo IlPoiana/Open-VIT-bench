@@ -5,7 +5,8 @@ TRANSPOSE_STRIDE=4
 ADD_STRIDE=4
 
 TOTAL_SAMPLES=(1024 2048 3072 4096 5120 6144 7168 8192)
-BATCH_N=(64 128 256 512)
+#Test 1 - test what is the relation between minibatch size, streams_n
+BATCH_N=(4 8 16 32)
 STREAMS_N=(2 4 8 16)
 
 BATCH_MIN_DIM=8 # > 8 so 16
@@ -15,6 +16,7 @@ MINIBATCH_MAX_DIM=256 # < 256 so 128
 b=0
 mini=0
 
+export NVIDIA_TF32_OVERRIDE=0
 make clean 
 mkdir -p gpu_out/vit_bench/5
 make test_bin/vit_bench.exe MULTI_STREAM_WORKSPACE=1 TOKENS_PER_BLOCK=$TOKENS_PER_BLOCK ELEMENTS_PER_TH=$ELEMENTS_PER_TH

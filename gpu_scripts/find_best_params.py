@@ -7,7 +7,6 @@ filter_mlp  = "kernel"
 filter_pe   = "total"
 filter_block= "total_time"
 filter_ph   = "kernel_time"
-filter_vit  = "total_time"
 
 def compute_top3(batch_results):
     output_data = []
@@ -141,29 +140,6 @@ def process_ph_batches(input_file, output_file):
     with open(output_file, 'w') as file:
         json.dump(output_data, file, indent=4)
 
-def process_vit_batches(input_file, output_file):
-     # Read the input JSON file
-    with open(input_file, 'r') as file:
-        data = json.load(file)
-
-    # Dictionary to hold the batch results
-    batch_results = defaultdict(list)
-
-    # Organize the data by batch
-    for entry in data:
-        batch = entry['batch'] * entry['batch_n']
-        params = entry['params']
-        time = entry['time']
-        total_time = entry['time']["total_time"]
-        batch_results[batch].append({'params': params, 'time': total_time, "time_composition": time})
-    
-    # Prepare the output structure
-    output_data = compute_top3(batch_results)
-
-    # Write the results to the output JSON file
-    with open(output_file, 'w') as file:
-        json.dump(output_data, file, indent=4)
-
 
 
 
@@ -186,7 +162,6 @@ if __name__ == "__main__":
         process_block_batches(input_json_file, output_json_file)
     if(component == "ph"):
         process_ph_batches(input_json_file, output_json_file)
-    if(component == "vit"):
-        process_vit_batches(input_json_file, output_json_file)
+
 
     
