@@ -390,27 +390,6 @@ void fused_linear_layer(
 }
 
 
-
-void gpu_mlp(
-    cublasLtHandle_t & handle, cudaStream_t & stream,
-    u_int B, u_int T, u_int C, u_int K,u_int M,
-    void * d_x, void * d_fc1, void * d_h,void * d_b1, void * d_fc2, void * d_b2, 
-    void * d_y
-){
-    linear_layer(
-        handle,stream, 
-        B,  T,  C,  K,
-        d_x, d_fc1, d_b1, d_h
-    );
-    linear_layer(
-        handle,stream,
-        B,  T,  K,  M,
-        d_h, d_fc2, d_b2, d_y,
-        false
-    );
-    return;
-}
-
 /**
  * @brief 
  * Overload method for supporting cached descriptors, algo and workspace
@@ -549,6 +528,28 @@ void fused_linear_layer(
         &algo, d_workspace, (size_t)MLP_WORKSPACE_SIZE, stream
     ));
     // CUDA_CHECK(cudaStreamSynchronize(stream)); //not necessary cause on the same stream
+    return;
+}
+
+
+void gpu_mlp(
+    cublasLtHandle_t & handle, cudaStream_t & stream,
+    u_int B, u_int T, u_int C, u_int K,u_int M,
+    void * d_x, void * d_fc1, void * d_h,void * d_b1, void * d_fc2, void * d_b2, 
+    void * d_y
+){
+    linear_layer(
+        handle,stream, 
+        B,  T,  C,  K,
+        d_x, d_fc1, d_b1, d_h,
+        true
+    );
+    linear_layer(
+        handle,stream,
+        B,  T,  K,  M,
+        d_h, d_fc2, d_b2, d_y,
+        false
+    );
     return;
 }
 

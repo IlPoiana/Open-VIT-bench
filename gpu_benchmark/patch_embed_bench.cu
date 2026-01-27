@@ -238,7 +238,7 @@ int main(int argc, char** argv){
     int channels = 3, height = 224, width = 224, Ho = 16, Wo = 16;
     convolution_dim conv_dim(batch, channels, height, width, embeddings, Ho, Wo);
     int tokens = conv_dim.y_height * conv_dim.y_width;
-    cout << "LayerNorm Benchmark\n"
+    cout << "PatchEmbedder Benchmark\n"
     << " input 4D tensor NCHW:" << "["<< batch<< "," << channels << ","<< height<< "," << width << "]" << "\n"
     << " patch size:          " << "[" << Ho << "," << Wo << "]" << "\n"
     << " batch_size:          " << batch << "\n"

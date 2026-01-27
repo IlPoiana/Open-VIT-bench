@@ -4,7 +4,7 @@ TOKENS_PER_BLOCK=(4) #Keep only the good values from the tests
 ELEMENTS_PER_TH=(8) #Keep only the good values from the tests
 
 # BATCHES=(2 4 8 16 32 64 128 256 512 1024 2048)
-BATCHES=(512)
+BATCHES=(2048)
 
 export NVIDIA_TF32_OVERRIDE=0
 mkdir -p gpu_out/block_bench

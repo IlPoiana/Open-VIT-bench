@@ -256,7 +256,7 @@ int main(int argc, char** argv)
     bool cpu_comparison     = get_arg(argc, argv, "--cpu", 0);
 
 
-    cout << "LayerNorm Benchmark\n"
+    cout << "Mlp Benchmark\n"
               << " batch_size:          " << batch << "\n"
               << " tokens:              " << tokens          << "\n"
               << " embeddings:          " << embeddings      << "\n"

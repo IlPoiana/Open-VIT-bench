@@ -29,7 +29,6 @@ Building upon the [C-ViT project](https://github.com/HicrestLaboratory/Open-VIT-
     - [Component numerical tests](#component-numerical-tests)
     - [Component benchmarks](#component-benchmarks)
     - [Results reproducibility](#results-reproducibility)
-    - [Visualization](#visualization)
   - [Maintainers](#maintainers)
     - [Project supervisors](#project-supervisors)
 
@@ -352,12 +351,6 @@ Example
 bash gpu_scripts/benchmarks/vit.sh
 ```
 
-All the tests have been executed on an NVIDIA A30 GPU, hosted on the University Of Trento "baldo" cluster.
-
-### Visualization
-python scripts
-
-TO DO
 ## Maintainers
 
 - *Alex Pegoraro* - [CPU](#c-vit) baseline - [GitHub](https://github.com/AlphaNightLight)

@@ -14,11 +14,14 @@
 #endif
 
 #define WORKSPACE_SIZE size_t(1) << 33 // 8GB for testing components
+// #define WORKSPACE_SIZE size_t(1) << 34 // 16GB for testing components
+
 
 #if WORKSPACE_FLAG == 1
     #undef WORKSPACE_SIZE
 // #define WORKSPACE_SIZE  1 << 26 // 64MB for multi stream
     #define WORKSPACE_SIZE  1 << 29 // 512MB for multi stream
+    // #define WORKSPACE_SIZE  1 << 33 // 8GB for multi stream
 #endif
 
 #define CUBLAS_CHECK(err)                                                         \
