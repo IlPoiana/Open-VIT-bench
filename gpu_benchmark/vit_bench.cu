@@ -21,17 +21,29 @@ struct vit_predictions {
     half * predictions_probabilities;
     int total_samples_n;
     size_t total_probabilities_n;
+    bool pinned;
 
-
-    vit_predictions(int total_probabilities_n_, int total_samples_):
+    vit_predictions(int total_probabilities_n_, int total_samples_, bool pinned_ = true):
         total_samples_n(total_samples_),
-        total_probabilities_n(total_probabilities_n_)
+        total_probabilities_n(total_probabilities_n_),
+        pinned(pinned_)
     {
-        predictions_probabilities = (half *)malloc(sizeof(half) * total_probabilities_n_);
+        if(pinned){
+            CUDA_CHECK(cudaMallocManaged(&predictions_probabilities, sizeof(half) * total_probabilities_n_));
+        }
+        else{
+            predictions_probabilities = (half *)malloc(sizeof(half) * total_probabilities_n_);
+        }
+    
     }
 
     ~vit_predictions(){
-        free(predictions_probabilities);
+        if(pinned){
+            CUDA_CHECK(cudaFreeHost(predictions_probabilities));
+        }
+        else{
+            free(predictions_probabilities);
+        }
     }
 
     // `class_prediction` and initialized array of size `total_samples_n`
@@ -159,6 +171,7 @@ vit_time vit_setup(
             CLASS_N, DEPTH, HEADS_N, SCALE, 
             EPS, EPS,
             MLP_HIDDEN,
+            true,
             false, 
             false, 
             true, 
@@ -191,6 +204,7 @@ vit_time vit_forward(
         CLASS_N, DEPTH, HEADS_N, SCALE, 
         EPS, EPS,
         MLP_HIDDEN,
+        true, 
         false, 
         false, 
         true, 
@@ -226,7 +240,8 @@ vit_time full_vit_multi_prediction(
     patch_emb_weights pe_w,
     vector<block_weights> blk_w,
     pred_head_weights ph_w,    
-    half *gpu_pics, int * gpu_predictions
+    half *gpu_pics, int * gpu_predictions,
+    bool pinned = true
 ){
     size_t batch_elements_n = conv_dim.batch * conv_dim.height * conv_dim.width * conv_dim.channels;
     half * gpu_pics_start = gpu_pics;
@@ -238,6 +253,7 @@ vit_time full_vit_multi_prediction(
             CLASS_N, DEPTH, HEADS_N, SCALE,
             EPS, EPS,
             MLP_HIDDEN,
+            pinned,
             false, 
             false, 
             true, 
@@ -260,8 +276,15 @@ vit_time full_vit_multi_prediction(
             gpu_vit.compute_predictions();
             gpu_vit.ph.class_prediction += conv_dim.batch;
         }
+
         gpu_pics_start = gpu_pics;
-        free(gpu_vit.ph.gpu_x);
+
+        if(pinned){
+            CUDA_CHECK(cudaFreeHost(gpu_vit.ph.gpu_x)); //pinned
+        }
+        else{
+            free(gpu_vit.ph.gpu_x);                     //paged
+        }
         free(gpu_vit.ph.h_x);
     });
 
@@ -276,7 +299,8 @@ vit_time full_vit_single_prediction(
     patch_emb_weights pe_w,
     vector<block_weights> blk_w,
     pred_head_weights ph_w,    
-    half *gpu_pics, int * gpu_predictions
+    half *gpu_pics, int * gpu_predictions,
+    bool pinned = true
 ){
     size_t batch_elements_n = conv_dim.batch * conv_dim.height * conv_dim.width * conv_dim.channels;
     half * gpu_pics_start = gpu_pics;
@@ -288,15 +312,23 @@ vit_time full_vit_single_prediction(
             CLASS_N, DEPTH, HEADS_N, SCALE,
             EPS, EPS,
             MLP_HIDDEN,
+            pinned,
             false, 
             false, 
             true, 
             false
         );
 
-        vit_predictions predictions(batch_n * conv_dim.batch * CLASS_N, batch_n * conv_dim.batch);
-        gpu_vit.ph.unmark_host_arr();        
-        free(gpu_vit.ph.gpu_x);
+        vit_predictions predictions(batch_n * conv_dim.batch * CLASS_N, batch_n * conv_dim.batch, pinned);
+        gpu_vit.ph.unmark_host_arr();
+
+        if(pinned){
+            CUDA_CHECK(cudaFreeHost(gpu_vit.ph.gpu_x)); //pinned
+        }
+        else{
+            free(gpu_vit.ph.gpu_x);                  //paged
+        }
+
         gpu_vit.ph.gpu_x = predictions.predictions_probabilities;
         gpu_vit.allocate_shared_buffers(); //d_x, d_y, d_pred, d_t....
         gpu_vit.create_descriptors(); // all the descriptors
@@ -330,15 +362,16 @@ vit_time multi_stream_full_vit(
     patch_emb_weights pe_w,
     vector<block_weights> blk_w,
     pred_head_weights ph_w,    
-    half *gpu_pics, int *gpu_predictions
+    half *gpu_pics, int *gpu_predictions,
+    bool pinned = true
 ){
     assert(conv_dim.batch == minibatch);
-    // assert(batch % minibatch == 0);
+
     half * gpu_pics_start = gpu_pics;
     size_t minibatch_elements_n = conv_dim.batch * conv_dim.height * conv_dim.width * conv_dim.channels;
     
     benchmark_time total_time = time_cpu(FULL_VIT_WARMUP, FULL_VIT_N, [&]() {  
-        vit_predictions predictions(batch_n * batch * CLASS_N, batch_n * batch);
+        vit_predictions predictions(batch_n * batch * CLASS_N, batch_n * batch, pinned);
         vector<GpuVit> gpu_vit;
         gpu_vit.reserve(streams_n);
         for(int i = 0; i < streams_n; i++){
@@ -348,6 +381,7 @@ vit_time multi_stream_full_vit(
                 CLASS_N, DEPTH, HEADS_N, SCALE,
                 EPS, EPS,
                 MLP_HIDDEN,
+                pinned,
                 false, 
                 false, 
                 true, 
@@ -359,7 +393,12 @@ vit_time multi_stream_full_vit(
             gpu_vit[i].create_descriptors();
             
             gpu_vit[i].ph.unmark_host_arr();
-            free(gpu_vit[i].ph.gpu_x);
+            if(pinned){
+                CUDA_CHECK(cudaFreeHost(gpu_vit[i].ph.gpu_x)); //pinned
+            }
+            else{
+                free(gpu_vit[i].ph.gpu_x);                  //paged
+            }
             // -Shared weights handling
             if(i == 0){
                 gpu_vit[i].allocate_weights();
@@ -452,6 +491,7 @@ int main(int argc, char** argv){
     int minibatch           = get_arg(argc, argv, "--minibatch", 2);
     int transpose_stride    = get_arg(argc, argv, "--transpose_stride", 2);
     int add_stride          = get_arg(argc, argv, "--add_stride", 2);
+    bool pinned             = get_arg(argc, argv, "--pinned", 1);
     bool cpu_comparison     = get_arg(argc, argv, "--cpu", 0);
 
 
@@ -478,8 +518,8 @@ int main(int argc, char** argv){
         << " add_stride           " << add_stride  << "\n"
         << " ln_tokens_per_block  " << TOKENS_PER_BLOCK << "\n"
         << " ln elements_per_th   " << ELEMENTS_PER_TH  << "\n"
-        << " warmup_iters:        " << WARM_UP << "\n"
-        << " timed_iters:         " << N << "\n";
+        << " warmup_iters:        " << FULL_VIT_WARMUP << "\n"
+        << " timed_iters:         " << FULL_VIT_N << "\n";
 
     
     // -  Memory allocation
@@ -489,8 +529,14 @@ int main(int argc, char** argv){
 
     vector<float> h_input(total_elements_num);
     
-    vector<half> gpu_input(total_elements_num);
-
+    // vector<half> gpu_input(total_elements_num);
+    half * gpu_input;
+    if(pinned){
+        CUDA_CHECK(cudaMallocManaged(&gpu_input, sizeof(half) * total_elements_num));   
+    }
+    else{
+        gpu_input = (half *)malloc(sizeof(half) * total_elements_num);
+    }
     vector<int> gpu_predictions(total_samples);
 
     random_device rd;          
@@ -504,7 +550,7 @@ int main(int argc, char** argv){
         }
     }
 
-    f32_to_f16(h_input.data(), gpu_input.data(), total_elements_num);
+    f32_to_f16(h_input.data(), gpu_input, total_elements_num);
 
     cudaStream_t streams[streams_n];
     cudnnHandle_t cudnn_handles[streams_n];
@@ -560,7 +606,7 @@ int main(int argc, char** argv){
             streams[0], cublaslt_handles[0], cudnn_handles[0],
             conv_dim, tokens,
             pe_w, blk_w, ph_w,
-            gpu_input.data(), gpu_predictions.data()
+            gpu_input, gpu_predictions.data()
         );
         avg_forward.print();
         avg_forward.to_JSON(
@@ -577,7 +623,8 @@ int main(int argc, char** argv){
             batch_n,
             conv_dim, tokens,
             pe_w, blk_w, ph_w,
-            gpu_input.data(), gpu_predictions.data()
+            gpu_input, gpu_predictions.data(),
+            pinned
         );
         avg_total_time.print();
         avg_total_time.to_JSON(
@@ -602,7 +649,8 @@ int main(int argc, char** argv){
             batch_n,
             conv_dim, tokens,
             pe_w, blk_w, ph_w,
-            gpu_input.data(), gpu_predictions.data()
+            gpu_input, gpu_predictions.data(),
+            pinned
         );
         avg_total_time.print();
         avg_total_time.to_JSON(
@@ -633,7 +681,8 @@ int main(int argc, char** argv){
             streams_n, batch_n, batch, minibatch,
             conv_dim, tokens,
             pe_w, blk_w, ph_w,
-            gpu_input.data(), gpu_predictions.data()
+            gpu_input, gpu_predictions.data(),
+            pinned
         );
         avg_total_time.print();
         avg_total_time.to_JSON(
@@ -650,16 +699,19 @@ int main(int argc, char** argv){
         if(cpu_comparison)
             cout << "Full comparison with CPU: " << (avg_accuracy / batch_n) * 100 << "%" <<endl;
     }
-    if(kernel == 6){
-        cout << "|| GpuVit MultiStream Pinned memory buffer ||" << endl;
-
-    }
 
     // - Cleanup
     for(int i = 0; i< streams_n; i++){
         CUBLAS_CHECK(cublasLtDestroy(cublaslt_handles[i]));
         CUDNN_CHECK(cudnnDestroy(cudnn_handles[i]));
         CUDA_CHECK(cudaStreamDestroy(streams[i]));
+    }
+
+    if(pinned){
+        CUDA_CHECK(cudaFreeHost(gpu_input));
+    }
+    else{
+        free(gpu_input);
     }
 
     return 0;

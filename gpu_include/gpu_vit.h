@@ -97,6 +97,8 @@ class GpuVit {
             double    _ph_epsilon = 1e-5,
             vit_size mlp_hidden = 3072,
 
+            vit_bool pinned_ph = true,
+
             vit_bool init_pe_descriptors = true,
             vit_bool allocate_pe_shared_ptrs = true, //initialize the weights shared pointers
 

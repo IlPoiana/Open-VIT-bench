@@ -2,7 +2,7 @@
 #include "../gpu_include/gpu_vit.h"
 
 void cpu_gpu_comparison(int argc, char * argv[]){
-    assert(argc > 1);
+    assert(argc > 2);
     
     //loading the batch
     //path to the cpic directory
@@ -10,6 +10,9 @@ void cpu_gpu_comparison(int argc, char * argv[]){
     PictureBatch pic;
     load_cpic(cpic_path, pic);
     
+    //Choose if pinned mem. or not
+    int pinned = atoi(argv[2]); // 0 = no pinned, 1 = pinned
+
     //loading the kernel
     const string cvit_path = "models/vit_1.cvit";
     VisionTransformer vit;
@@ -24,8 +27,17 @@ void cpu_gpu_comparison(int argc, char * argv[]){
 
     // -- GPU --
     int input_pics_elements_number = pic.get_B() * pic.get_C() * pic.get_H() *pic.get_W() ;
-    half * gpu_pics_minibatch = (half*)malloc(sizeof(half) *input_pics_elements_number);
+    half * gpu_pics_minibatch;
+    if(pinned == 1){
+        CUDA_CHECK(cudaHostAlloc(
+            (void**)&gpu_pics_minibatch, sizeof(half) * input_pics_elements_number, cudaHostAllocPortable
+        ));
+    } else {
+        gpu_pics_minibatch = (half*)malloc(sizeof(half) * input_pics_elements_number);
+    }
     f32_to_f16(pic.get_data(), gpu_pics_minibatch, input_pics_elements_number);
+
+
 
     int pe_size[6];
     vit.get_kernel_shape(pe_size);
@@ -116,6 +128,15 @@ void cpu_gpu_comparison(int argc, char * argv[]){
     gpu_vit.free_buffers();       
     gpu_vit.free_weights(); //shared weights!
     gpu_vit.destroy_descriptors();
+
+    // -Cleanup
+    CUDA_CHECK(cudaStreamDestroy(stream));
+    CUBLAS_CHECK(cublasLtDestroy(cublas_handle));
+    CUDNN_CHECK(cudnnDestroy(cudnn_handle));
+
+    if(pinned == 1){
+        CUDA_CHECK(cudaFreeHost(gpu_pics_minibatch));
+    }
 
     return;
 }

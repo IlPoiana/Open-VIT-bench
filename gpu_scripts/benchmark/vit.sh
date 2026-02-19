@@ -4,10 +4,10 @@ ELEMENTS_PER_TH=(8)
 TRANSPOSE_STRIDE=4
 ADD_STRIDE=4
 
-BATCH_N=(8)
-BATCHES=(4096)
-MINIBATCHES=(2048)
-STREAMS_N=(2)
+BATCH_N=(16)
+BATCHES=(256)
+MINIBATCHES=(64)
+STREAMS_N=(4)
 
 KERNEL_START=2 
 KERNEL_END=5 
@@ -22,11 +22,11 @@ for (( k=KERNEL_START; k<=KERNEL_END; k++)); do
                 make clean_bench_vit
                 make test_bin/vit_bench.exe TOKENS_PER_BLOCK=$tok ELEMENTS_PER_TH=$ELEMENTS_PER_TH
                 if [ "$k" -eq "2" ]; then
-                    ./test_bin/vit_bench.exe --kernel $k --batch $b --transpose_stride $TRANSPOSE_STRIDE --add_stride $ADD_STRIDE > gpu_out/vit_bench/$k/$b.out
+                    ./test_bin/vit_bench.exe --kernel $k --batch $b --minibatch $b --transpose_stride $TRANSPOSE_STRIDE --add_stride $ADD_STRIDE > gpu_out/vit_bench/$k/$b.out
                 else
                     for bn in "${BATCH_N[@]}"; do
                         if [ "$k" -lt "5" ]; then
-                            ./test_bin/vit_bench.exe --kernel $k --batch $b --batch_n $bn --transpose_stride $TRANSPOSE_STRIDE --add_stride $ADD_STRIDE > gpu_out/vit_bench/$k/$b-$bn.out
+                            ./test_bin/vit_bench.exe --kernel $k --batch $b --minibatch $b --batch_n $bn --transpose_stride $TRANSPOSE_STRIDE --add_stride $ADD_STRIDE > gpu_out/vit_bench/$k/$b-$bn.out
                         else
                             make clean_gpu
                             make test_bin/vit_bench.exe MULTI_STREAM_WORKSPACE=1 TOKENS_PER_BLOCK=$tok ELEMENTS_PER_TH=$ELEMENTS_PER_TH

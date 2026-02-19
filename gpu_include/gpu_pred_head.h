@@ -94,7 +94,8 @@ class GpuPredictionHead {
             u_int class_num_,
             cudnnHandle_t &cudnn_handle_,
             cublasLtHandle_t &cublas_handle_,
-            cudaStream_t &stream_
+            cudaStream_t &stream_,
+            bool pinned_ = false
         );
 
         ~GpuPredictionHead();
@@ -149,4 +150,5 @@ class GpuPredictionHead {
         bool destroy_shared_weights = false;
         bool destroy_shared_buffers = false;
         bool host_arr_initialized = false;
+        bool pinned = false;
 };

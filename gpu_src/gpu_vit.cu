@@ -312,6 +312,8 @@ GpuVit::GpuVit(
     double _ph_epsilon,
     vit_size mlp_hidden ,
 
+    vit_bool pinned_ph,
+
     vit_bool init_pe_descriptors,
     vit_bool allocate_pe_shared_ptrs, //initialize the weights shared pointers
 
@@ -345,7 +347,7 @@ GpuVit::GpuVit(
     blocks(),
     ph(
         _conv_dim.batch, _tokens + 1, _conv_dim.embeddings, _num_classes,
-        _cudnn_handle, _cublas_handle, _stream
+        _cudnn_handle, _cublas_handle, _stream, pinned_ph 
     )
 
 

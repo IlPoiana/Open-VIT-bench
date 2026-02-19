@@ -114,7 +114,8 @@ GpuPredictionHead::GpuPredictionHead(
     u_int class_num_,
     cudnnHandle_t &cudnn_handle_,
     cublasLtHandle_t &cublas_handle_,
-    cudaStream_t &stream_
+    cudaStream_t &stream_,
+    bool pinned_
 ):
     batch(batch_) ,
     tokens(tokens_) ,
@@ -123,7 +124,8 @@ GpuPredictionHead::GpuPredictionHead(
     cublas_handle(cublas_handle_),
     cudnn_handle(cudnn_handle_),
     stream(stream_),
-    ln_block_dim(embeddings_)
+    ln_block_dim(embeddings_),
+    pinned(pinned_)
 {
     class_prediction = (int *)malloc(sizeof(int) * batch);
     input_elements_number = batch * tokens * embeddings;
@@ -132,7 +134,13 @@ GpuPredictionHead::GpuPredictionHead(
     assert(input_elements_number % (ln_block_dim * TOKENS_PER_BLOCK) == 0);
     ln_blocks_num = (batch * tokens) / TOKENS_PER_BLOCK;
 
-    gpu_x = (half *)malloc(sizeof(half) * input_elements_number);
+    if(pinned){
+        CUDA_CHECK(cudaHostAlloc((void**)&gpu_x, sizeof(half) * input_elements_number, cudaHostAllocPortable));
+    } else {
+        gpu_x = (half *)malloc(sizeof(half) * input_elements_number);
+    }
+    // gpu_x = (half *)malloc(sizeof(half) * input_elements_number);
+
     h_x = (float *)malloc(sizeof(float) * input_elements_number);
     host_arr_initialized = true;
 }
@@ -176,7 +184,12 @@ GpuPredictionHead::~GpuPredictionHead(){
     }
     if(host_arr_initialized){
         free(class_prediction);
-        free(gpu_x);
+        if(pinned){
+            CUDA_CHECK(cudaFreeHost(gpu_x));   
+        }
+        else{
+            free(gpu_x);
+        }
         free(h_x);
     }
 }
